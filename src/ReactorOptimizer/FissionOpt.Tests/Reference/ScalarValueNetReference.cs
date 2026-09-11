@@ -1,20 +1,15 @@
-using System.Numerics.Tensors;
-
-namespace FissionOpt.Core;
+using FissionOpt.Core;
+// Verbatim copy of the pre-vectorization ValueNet (plain loops), kept as the oracle for the SIMD version.
+namespace FissionOpt.Tests.Reference;
 
 /// <summary>
 /// The value network shared by both optimizers (FissionNet.cpp / OverhaulFissionNet.cpp): a
 /// 128→64→1 MLP with the leaky clipped activation <c>0.1x + clip(x, -1, 1)</c>, trained with Adam
 /// on minibatches drawn from a ring pool of (features, episode return) pairs. Feature extraction is
-/// the caller's job.
-///
-/// The dense work (layer dot products, the gradient outer products expressed as row-wise axpy,
-/// the Adam updates) goes through <see cref="TensorPrimitives"/> so it uses SIMD. Nothing allocates
-/// after construction except the pool growing towards its cap. Summation order inside the SIMD
-/// reductions is fixed for a given vector width, so runs are reproducible on one machine but the
-/// last bits (and hence a run's trajectory) can differ between CPUs with different vector widths.
+/// the caller's job; everything here is flat arrays and plain loops, and nothing allocates after
+/// construction except the pool growing towards its cap.
 /// </summary>
-public sealed class ValueNet
+public sealed class ScalarValueNetReference
 {
     public const int NLayer1 = 128;
     public const int NLayer2 = 64;
@@ -40,13 +35,12 @@ public sealed class ValueNet
     private readonly double[] _v1, _p1, _v2, _p2;
     private readonly double[] _batchInput, _batchTarget, _bv1, _bp1, _bv2, _bp2, _bOutV;
     private readonly double[] _gOut, _gwOut, _gv2, _gb2, _gw2, _gv1, _gb1, _gw1;
-    private readonly double[] _tmpA, _tmpB; // Adam scratch, sized to the largest parameter array
 
     public int NFeatures => _nFeatures;
     public int TrajectoryLength => _trajectoryLength;
     public int PoolSize => _poolSize;
 
-    public ValueNet(int nFeatures, double lRate, int nPool, Rng rng)
+    public ScalarValueNetReference(int nFeatures, double lRate, int nPool, Rng rng)
     {
         _rng = rng;
         _nFeatures = nFeatures;
@@ -81,9 +75,6 @@ public sealed class ValueNet
         _gv1 = new double[NMiniBatch * NLayer1];
         _gb1 = new double[NLayer1];
         _gw1 = new double[NLayer1 * nFeatures];
-        int maxLen = Math.Max(_w1.Length, _w2.Length);
-        _tmpA = new double[maxLen];
-        _tmpB = new double[maxLen];
     }
 
     public void NewTrajectory() => _trajectoryLength = 0;
@@ -124,29 +115,31 @@ public sealed class ValueNet
         }
     }
 
-    /// <summary>The activation: <c>v * leak + clip(v, -1, 1)</c>, element-wise into <paramref name="p"/>.</summary>
-    private static void Pwl(ReadOnlySpan<double> v, Span<double> p)
-    {
-        TensorPrimitives.Clamp(v, -1.0, 1.0, p);
-        TensorPrimitives.MultiplyAdd(v, Leak, p, p);
-    }
-
-    /// <summary>Dense layer: out[j] = b[j] + w[j,:] · x.</summary>
-    private static void Layer(ReadOnlySpan<double> w, ReadOnlySpan<double> b, ReadOnlySpan<double> x, Span<double> v)
-    {
-        int n = x.Length;
-        for (int j = 0; j < v.Length; ++j)
-            v[j] = b[j] + TensorPrimitives.Dot(w.Slice(j * n, n), x);
-    }
+    private static double Pwl(double v) => v * Leak + Math.Clamp(v, -1.0, 1.0);
 
     /// <summary>Mirrors <c>Net::infer</c>.</summary>
     public double Infer(ReadOnlySpan<double> x)
     {
-        Layer(_w1, _b1, x, _v1);
-        Pwl(_v1, _p1);
-        Layer(_w2, _b2, _p1, _v2);
-        Pwl(_v2, _p2);
-        return _bOut + TensorPrimitives.Dot(_wOut, _p2);
+        int nf = _nFeatures;
+        for (int j = 0; j < NLayer1; ++j)
+        {
+            double acc = _b1[j];
+            int row = j * nf;
+            for (int k = 0; k < nf; ++k) acc += _w1[row + k] * x[k];
+            _v1[j] = acc;
+            _p1[j] = Pwl(acc);
+        }
+        for (int j = 0; j < NLayer2; ++j)
+        {
+            double acc = _b2[j];
+            int row = j * NLayer1;
+            for (int k = 0; k < NLayer1; ++k) acc += _w2[row + k] * _p1[k];
+            _v2[j] = acc;
+            _p2[j] = Pwl(acc);
+        }
+        double result = _bOut;
+        for (int j = 0; j < NLayer2; ++j) result += _wOut[j] * _p2[j];
+        return result;
     }
 
     /// <summary>Mirrors <c>Net::train</c>: one Adam step on a random minibatch from the pool. Returns the batch MSE.</summary>
@@ -163,16 +156,27 @@ public sealed class ValueNet
         // Forward
         for (int i = 0; i < NMiniBatch; ++i)
         {
-            var x = _batchInput.AsSpan(i * nf, nf);
-            var v1 = _bv1.AsSpan(i * NLayer1, NLayer1);
-            var p1 = _bp1.AsSpan(i * NLayer1, NLayer1);
-            var v2 = _bv2.AsSpan(i * NLayer2, NLayer2);
-            var p2 = _bp2.AsSpan(i * NLayer2, NLayer2);
-            Layer(_w1, _b1, x, v1);
-            Pwl(v1, p1);
-            Layer(_w2, _b2, p1, v2);
-            Pwl(v2, p2);
-            _bOutV[i] = _bOut + TensorPrimitives.Dot(_wOut, p2);
+            int xi = i * nf;
+            for (int j = 0; j < NLayer1; ++j)
+            {
+                double acc = _b1[j];
+                int row = j * nf;
+                for (int k = 0; k < nf; ++k) acc += _w1[row + k] * _batchInput[xi + k];
+                _bv1[i * NLayer1 + j] = acc;
+                _bp1[i * NLayer1 + j] = Pwl(acc);
+            }
+            for (int j = 0; j < NLayer2; ++j)
+            {
+                double acc = _b2[j];
+                int row = j * NLayer1;
+                int pi = i * NLayer1;
+                for (int k = 0; k < NLayer1; ++k) acc += _w2[row + k] * _bp1[pi + k];
+                _bv2[i * NLayer2 + j] = acc;
+                _bp2[i * NLayer2 + j] = Pwl(acc);
+            }
+            double o = _bOut;
+            for (int j = 0; j < NLayer2; ++j) o += _wOut[j] * _bp2[i * NLayer2 + j];
+            _bOutV[i] = o;
         }
         double loss = 0.0;
         for (int i = 0; i < NMiniBatch; ++i)
@@ -189,42 +193,54 @@ public sealed class ValueNet
             _gOut[i] = (_bOutV[i] - _batchTarget[i]) * 2 / NMiniBatch;
             gbOut += _gOut[i];
         }
-        Array.Clear(_gwOut); Array.Clear(_gb2); Array.Clear(_gw2); Array.Clear(_gb1); Array.Clear(_gw1);
-        for (int i = 0; i < NMiniBatch; ++i)
+        for (int j = 0; j < NLayer2; ++j)
         {
-            var p2 = _bp2.AsSpan(i * NLayer2, NLayer2);
-            // gwOut += gOut[i] * p2
-            TensorPrimitives.MultiplyAdd(p2, _gOut[i], _gwOut, _gwOut);
-            // gv2 = gOut[i] * wOut ⊙ (leak + (|v2| < 1))
-            var v2 = _bv2.AsSpan(i * NLayer2, NLayer2);
-            var gv2 = _gv2.AsSpan(i * NLayer2, NLayer2);
-            double g = _gOut[i];
-            for (int j = 0; j < NLayer2; ++j)
-                gv2[j] = g * _wOut[j] * (Leak + (Math.Abs(v2[j]) < 1.0 ? 1.0 : 0.0));
-            TensorPrimitives.Add(gv2, _gb2, _gb2);
-            // gw2[j,:] += gv2[j] * p1 ;  gp1 = Σ_j gv2[j] * w2[j,:]
-            var p1 = _bp1.AsSpan(i * NLayer1, NLayer1);
-            var gp1 = _gv1.AsSpan(i * NLayer1, NLayer1);
-            gp1.Clear();
-            for (int j = 0; j < NLayer2; ++j)
-            {
-                var gw2Row = _gw2.AsSpan(j * NLayer1, NLayer1);
-                TensorPrimitives.MultiplyAdd(p1, gv2[j], gw2Row, gw2Row);
-                TensorPrimitives.MultiplyAdd(_w2.AsSpan(j * NLayer1, NLayer1), gv2[j], gp1, gp1);
-            }
-            // gv1 = gp1 ⊙ (leak + (|v1| < 1))
-            var v1 = _bv1.AsSpan(i * NLayer1, NLayer1);
-            for (int k = 0; k < NLayer1; ++k)
-                gp1[k] *= Leak + (Math.Abs(v1[k]) < 1.0 ? 1.0 : 0.0);
-            TensorPrimitives.Add(gp1, _gb1, _gb1);
-            // gw1[k,:] += gv1[k] * x
-            var x = _batchInput.AsSpan(i * nf, nf);
-            for (int k = 0; k < NLayer1; ++k)
-            {
-                var gw1Row = _gw1.AsSpan(k * nf, nf);
-                TensorPrimitives.MultiplyAdd(x, gp1[k], gw1Row, gw1Row);
-            }
+            double acc = 0.0;
+            for (int i = 0; i < NMiniBatch; ++i) acc += _gOut[i] * _bp2[i * NLayer2 + j];
+            _gwOut[j] = acc;
         }
+        // gvLayer2 = gvPwlLayer2 * (leak + (|vLayer2| < 1)), gvPwlLayer2(i,j) = gvOutput(i) * wOutput(j)
+        for (int i = 0; i < NMiniBatch; ++i)
+            for (int j = 0; j < NLayer2; ++j)
+            {
+                int idx = i * NLayer2 + j;
+                _gv2[idx] = _gOut[i] * _wOut[j] * (Leak + (Math.Abs(_bv2[idx]) < 1.0 ? 1.0 : 0.0));
+            }
+        for (int j = 0; j < NLayer2; ++j)
+        {
+            double acc = 0.0;
+            for (int i = 0; i < NMiniBatch; ++i) acc += _gv2[i * NLayer2 + j];
+            _gb2[j] = acc;
+        }
+        for (int j = 0; j < NLayer2; ++j)
+            for (int k = 0; k < NLayer1; ++k)
+            {
+                double acc = 0.0;
+                for (int i = 0; i < NMiniBatch; ++i) acc += _gv2[i * NLayer2 + j] * _bp1[i * NLayer1 + k];
+                _gw2[j * NLayer1 + k] = acc;
+            }
+        // gvPwlLayer1(i,k) = sum_j gvLayer2(i,j) * wLayer2(j,k); gvLayer1 = that * (leak + (|vLayer1| < 1))
+        for (int i = 0; i < NMiniBatch; ++i)
+            for (int k = 0; k < NLayer1; ++k)
+            {
+                double acc = 0.0;
+                for (int j = 0; j < NLayer2; ++j) acc += _gv2[i * NLayer2 + j] * _w2[j * NLayer1 + k];
+                int idx = i * NLayer1 + k;
+                _gv1[idx] = acc * (Leak + (Math.Abs(_bv1[idx]) < 1.0 ? 1.0 : 0.0));
+            }
+        for (int k = 0; k < NLayer1; ++k)
+        {
+            double acc = 0.0;
+            for (int i = 0; i < NMiniBatch; ++i) acc += _gv1[i * NLayer1 + k];
+            _gb1[k] = acc;
+        }
+        for (int k = 0; k < NLayer1; ++k)
+            for (int m = 0; m < nf; ++m)
+            {
+                double acc = 0.0;
+                for (int i = 0; i < NMiniBatch; ++i) acc += _gv1[i * NLayer1 + k] * _batchInput[i * nf + m];
+                _gw1[k * nf + m] = acc;
+            }
 
         // Adam
         _mCorrector *= MRate;
@@ -241,30 +257,14 @@ public sealed class ValueNet
         return loss;
     }
 
-    /// <summary>
-    /// Adam update, element-wise: m = β1·m + (1−β1)·g; r = β2·r + (1−β2)·g²;
-    /// w −= lr·m / ((1−β1ᵗ)·(√(r/(1−β2ᵗ)) + 1e−8)). Same operation order as the scalar loop.
-    /// </summary>
     private void Adam(double[] w, double[] m, double[] r, double[] g)
     {
-        int n = w.Length;
-        var a = _tmpA.AsSpan(0, n);
-        var b = _tmpB.AsSpan(0, n);
         double mc = 1 - _mCorrector, rc = 1 - _rCorrector;
-        // m = MRate*m + (1-MRate)*g
-        TensorPrimitives.Multiply(m, MRate, m);
-        TensorPrimitives.MultiplyAdd(g, 1 - MRate, m, m);
-        // r = RRate*r + (1-RRate)*g*g
-        TensorPrimitives.Multiply(g, g, a);
-        TensorPrimitives.Multiply(r, RRate, r);
-        TensorPrimitives.MultiplyAdd(a, 1 - RRate, r, r);
-        // w -= lRate*m / (mc * (sqrt(r/rc) + 1e-8))
-        TensorPrimitives.Divide(r, rc, a);
-        TensorPrimitives.Sqrt(a, a);
-        TensorPrimitives.Add(a, 1e-8, a);
-        TensorPrimitives.Multiply(a, mc, a);
-        TensorPrimitives.Multiply(m, _lRate, b);
-        TensorPrimitives.Divide(b, a, b);
-        TensorPrimitives.Subtract(w, b, w);
+        for (int i = 0; i < w.Length; ++i)
+        {
+            m[i] = MRate * m[i] + (1 - MRate) * g[i];
+            r[i] = RRate * r[i] + (1 - RRate) * (g[i] * g[i]);
+            w[i] -= _lRate * m[i] / (mc * (Math.Sqrt(r[i] / rc) + 1e-8));
+        }
     }
 }

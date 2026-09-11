@@ -83,9 +83,15 @@ accelerations exist, both toggleable and both tested to reproduce the identical 
 - **Parallel children** (`--parallel auto|on|off`): when incremental evaluation is off and the
   grid has 300+ tiles, the four children of each step are evaluated on separate threads.
 
+The value net's dense math (`ValueNet`) uses `TensorPrimitives` (SIMD): ~4× faster training
+steps and inference than the plain loops, which the test project keeps as a reference oracle.
+SIMD reductions fix their summation order per vector width, so a seeded run with the net on is
+reproducible on one machine but may differ in its trajectory between CPUs of different vector
+widths.
+
 Measured on a 24³, no symmetry, breeder goal (Release, this machine): scalar ~390 steps/s,
-parallel children ~1 450, incremental ~40 000 with the value net (the net is then the
-bottleneck) and ~150 000 without it. Always build Release — Debug is ~3.5× slower.
+parallel children ~1 450, incremental ~150 000 in rollout; a training iteration costs ~0.5 ms
+and an inference ~2.4 µs. Always build Release — Debug is ~3.5× slower.
 
 One consequence of the counter-based totals: the port's classic double totals can differ
 from the C++ in the last bit (summation order), so the classic oracle test compares those
