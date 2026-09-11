@@ -12,7 +12,7 @@ public sealed class OverhaulSettingsPanel : View
 {
     private readonly TextField _sizeX, _sizeY, _sizeZ, _search, _fuelLimit, _mName, _mEff, _mHeat, _mCrit, _seed;
     private readonly TextField[] _sourceLimits = new TextField[3];
-    private readonly CheckBox _mSelf, _controllable, _symX, _symY, _symZ;
+    private readonly CheckBox _mSelf, _controllable, _symX, _symY, _symZ, _simdNet;
     private readonly ListView _presetList, _fuelList;
     private readonly ObservableCollection<string> _presetItems = new(), _fuelItems = new();
     private readonly List<OverhaulFuelPreset> _filtered = new();
@@ -69,7 +69,7 @@ public sealed class OverhaulSettingsPanel : View
         fuelFrame.Add(_fuelList, remove);
         Add(fuelFrame);
 
-        var optFrame = new FrameView { Title = "Options", X = Pos.Right(presetFrame) + 1, Y = Pos.Bottom(fuelFrame), Width = Dim.Fill(1), Height = 16 };
+        var optFrame = new FrameView { Title = "Options", X = Pos.Right(presetFrame) + 1, Y = Pos.Bottom(fuelFrame), Width = Dim.Fill(1), Height = 18 };
         var srcLabel = new Label { X = 0, Y = 0, Text = "Max neutron sources:  Cf-252" };
         _sourceLimits[0] = Field(Pos.Right(srcLabel) + 1, 0, 5, "");
         var poLabel = new Label { X = Pos.Right(_sourceLimits[0]) + 1, Y = 0, Text = "Po-Be" };
@@ -88,9 +88,10 @@ public sealed class OverhaulSettingsPanel : View
         _symX = new CheckBox { X = Pos.Right(symLabel) + 1, Y = 10, Text = "X", Value = CheckState.Checked };
         _symY = new CheckBox { X = Pos.Right(_symX) + 2, Y = 10, Text = "Y", Value = CheckState.Checked };
         _symZ = new CheckBox { X = Pos.Right(_symY) + 2, Y = 10, Text = "Z", Value = CheckState.Checked };
-        var seedLabel = new Label { X = 0, Y = 12, Text = "Seed:" };
-        _seed = Field(Pos.Right(seedLabel) + 1, 12, 12, "0");
-        optFrame.Add(srcLabel, _sourceLimits[0], poLabel, _sourceLimits[1], raLabel, _sourceLimits[2], goalLabel, _goal, _controllable, symLabel, _symX, _symY, _symZ, seedLabel, _seed);
+        _simdNet = new CheckBox { X = 0, Y = 12, Text = "SIMD value net (faster; a seed reproduces a run only with the same setting)", Value = CheckState.Checked };
+        var seedLabel = new Label { X = 0, Y = 14, Text = "Seed:" };
+        _seed = Field(Pos.Right(seedLabel) + 1, 14, 12, "0");
+        optFrame.Add(srcLabel, _sourceLimits[0], poLabel, _sourceLimits[1], raLabel, _sourceLimits[2], goalLabel, _goal, _controllable, symLabel, _symX, _symY, _symZ, _simdNet, seedLabel, _seed);
         Add(optFrame);
 
         _search.TextChanged += (_, _) => RefreshPresets();
@@ -175,6 +176,8 @@ public sealed class OverhaulSettingsPanel : View
     public int Seed => int.TryParse(_seed.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var s)
         ? s : throw new ArgumentException("Seed must be an integer");
 
+    public bool SimdNet => _simdNet.Value == CheckState.Checked;
+
     public void ApplyTo(OverhaulSettings s)
     {
         s.SizeZ = PositiveInt("Core size X", _sizeX.Text);
@@ -194,7 +197,7 @@ public sealed class OverhaulSettingsPanel : View
 
     public void SetEnabledAll(bool enabled)
     {
-        foreach (var v in new View[] { _sizeX, _sizeY, _sizeZ, _search, _presetList, _fuelLimit, _mName, _mEff, _mHeat, _mCrit, _mSelf, _fuelList, _goal, _controllable, _symX, _symY, _symZ, _seed })
+        foreach (var v in new View[] { _sizeX, _sizeY, _sizeZ, _search, _presetList, _fuelLimit, _mName, _mEff, _mHeat, _mCrit, _mSelf, _fuelList, _goal, _controllable, _symX, _symY, _symZ, _simdNet, _seed })
             v.Enabled = enabled;
         foreach (var v in _sourceLimits) v.Enabled = enabled;
     }

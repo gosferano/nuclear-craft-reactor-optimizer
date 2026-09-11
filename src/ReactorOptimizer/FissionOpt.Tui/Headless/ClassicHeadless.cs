@@ -22,6 +22,7 @@ public static class ClassicHeadless
           --goal power|breeder|efficiency   (default power)
           --sym x,y,z | --sym none          mirror symmetries (default x,y,z)
           --no-net                disable the value network
+          --simd-net on|off       Vector256 kernels in the value net (default on; off = original scalar loops)
           --incremental auto|on|off  evaluate mutations incrementally (auto: on unless active coolers + accessibility)
           --parallel auto|on|off  evaluate the 4 children of each step on separate threads (auto: on for >= 300 tiles;
                                   only used when incremental evaluation is off)
@@ -42,6 +43,7 @@ public static class ClassicHeadless
         string goal = "power", sym = "x,y,z";
         bool useNet = true, heatNeutral = true, accessible = true, quiet = false;
         bool? parallel = null, incremental = null;
+        bool simdNet = true;
         int seed = 0; double seconds = 30; long? steps = null; string? outFile = null;
 
         for (int i = 0; i < args.Length; ++i)
@@ -68,6 +70,9 @@ public static class ClassicHeadless
                 case "--goal": goal = Next(); break;
                 case "--sym": sym = Next(); break;
                 case "--no-net": useNet = false; break;
+                case "--simd-net":
+                    simdNet = Next().ToLowerInvariant() switch { "on" => true, "off" => false, var v => throw new ArgumentException("--simd-net expects on|off, got " + v) };
+                    break;
                 case "--incremental":
                     incremental = Next().ToLowerInvariant() switch { "auto" => null, "on" => true, "off" => false, var v => throw new ArgumentException("--incremental expects auto|on|off, got " + v) };
                     break;
@@ -141,8 +146,8 @@ public static class ClassicHeadless
 
         Console.WriteLine($"seed={seed} size={settings.SizeX}x{settings.SizeY}x{settings.SizeZ} fuel={fuelName} power={settings.FuelBasePower} heat={settings.FuelBaseHeat} rates={ratePreset.Config} goal={settings.Goal} sym={sym} net={useNet} heatNeutral={heatNeutral} accessible={accessible}");
 
-        using var opt = new ClassicOpt(settings, useNet, seed, parallel, incremental);
-        Console.WriteLine($"incremental evaluation: {opt.IncrementalEvaluation}, parallel children: {opt.ParallelChildren}");
+        using var opt = new ClassicOpt(settings, useNet, seed, parallel, incremental, simdNet);
+        Console.WriteLine($"incremental evaluation: {opt.IncrementalEvaluation}, parallel children: {opt.ParallelChildren}, simd net: {opt.SimdNet}");
         var sw = Stopwatch.StartNew();
         long n = 0;
         while (steps.HasValue ? n < steps.Value : sw.Elapsed.TotalSeconds < seconds)

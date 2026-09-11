@@ -15,8 +15,8 @@ public sealed class ValueNetBench
     public void PrintTimings()
     {
         const int nf = 40;
-        var a = new ValueNet(nf, 0.01, 100_000, new Rng(1));
-        var b = new ScalarValueNetReference(nf, 0.01, 100_000, new Rng(1));
+        var a = new ValueNet(nf, 0.01, 100_000, new Rng(1), simd: true);
+        var b = new ValueNet(nf, 0.01, 100_000, new Rng(1), simd: false);
         var f = new double[nf];
         var r = new Random(2);
         for (int i = 0; i < 2000; ++i) { for (int k = 0; k < nf; ++k) f[k] = r.NextDouble(); a.AppendTrajectory(f); b.AppendTrajectory(f); }

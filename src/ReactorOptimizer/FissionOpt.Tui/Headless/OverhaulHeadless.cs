@@ -20,6 +20,7 @@ public static class OverhaulHeadless
           --limit LABEL=N         max count for a block label (Wt Fe Rs ... Cr ## == -- =) -) <> >< []). Repeatable.
           --goal output|fuel|efficiency|irradiation   (default output)
           --controllable          only generate reactors that shut down with shields on
+          --simd-net on|off       Vector256 kernels in the value net (default on; off = original scalar loops)
           --sym x,y,z | --sym none          mirror symmetries (default x,y,z)
           --seed N                RNG seed (default 0)
           --seconds S             time budget (default 60)
@@ -33,7 +34,7 @@ public static class OverhaulHeadless
         string size = "7x7x7", goal = "output", sym = "x,y,z", sourceLimits = ",0,0";
         var fuels = new List<OverhaulFuel>();
         var limits = new List<(string label, int n)>();
-        bool controllable = false, quiet = false;
+        bool controllable = false, quiet = false, simdNet = true;
         int seed = 0; double seconds = 60; long? steps = null; string? outFile = null;
 
         for (int i = 0; i < args.Length; ++i)
@@ -72,6 +73,9 @@ public static class OverhaulHeadless
                 }
                 case "--goal": goal = Next(); break;
                 case "--controllable": controllable = true; break;
+                case "--simd-net":
+                    simdNet = Next().ToLowerInvariant() switch { "on" => true, "off" => false, var v => throw new ArgumentException("--simd-net expects on|off, got " + v) };
+                    break;
                 case "--sym": sym = Next(); break;
                 case "--seed": seed = int.Parse(Next(), CultureInfo.InvariantCulture); break;
                 case "--seconds": seconds = ParseDouble(Next()); break;
@@ -122,7 +126,8 @@ public static class OverhaulHeadless
 
         Console.WriteLine($"seed={seed} mode=overhaul size={settings.SizeX}x{settings.SizeY}x{settings.SizeZ} fuels={string.Join(",", fuels.Select(f => f.Name))} goal={settings.Goal} sym={sym} controllable={controllable} sourceLimits={string.Join(",", settings.SourceLimits)}");
 
-        var opt = new OverhaulOpt(settings, seed);
+        var opt = new OverhaulOpt(settings, seed, simdNet);
+        Console.WriteLine($"simd net: {opt.SimdNet}");
         var sw = Stopwatch.StartNew();
         long n = 0;
         while (steps.HasValue ? n < steps.Value : sw.Elapsed.TotalSeconds < seconds)

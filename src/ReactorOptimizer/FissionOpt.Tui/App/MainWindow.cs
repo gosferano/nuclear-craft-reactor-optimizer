@@ -105,14 +105,14 @@ public sealed class MainWindow : Window
                 var s = new OverhaulSettings();
                 _overhaulSettings.ApplyTo(s);
                 _overhaulBlocks.ApplyTo(s);
-                session = new OverhaulSession(s, _overhaulSettings.Seed);
+                session = new OverhaulSession(s, _overhaulSettings.Seed, _overhaulSettings.SimdNet);
             }
             else
             {
                 var s = new ClassicSettings();
                 _classicSettings.ApplyTo(s);
                 _classicBlocks.ApplyTo(s);
-                session = new ClassicSession(s, _classicSettings.UseNet, _classicSettings.Seed, _classicSettings.FuelName, _classicSettings.Incremental);
+                session = new ClassicSession(s, _classicSettings.UseNet, _classicSettings.Seed, _classicSettings.FuelName, _classicSettings.Incremental, _classicSettings.SimdNet);
             }
         }
         catch (ArgumentException e)

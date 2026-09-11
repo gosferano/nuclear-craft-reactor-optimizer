@@ -83,11 +83,12 @@ accelerations exist, both toggleable and both tested to reproduce the identical 
 - **Parallel children** (`--parallel auto|on|off`): when incremental evaluation is off and the
   grid has 300+ tiles, the four children of each step are evaluated on separate threads.
 
-The value net's dense math (`ValueNet`) uses `TensorPrimitives` (SIMD): ~4× faster training
-steps and inference than the plain loops, which the test project keeps as a reference oracle.
-SIMD reductions fix their summation order per vector width, so a seeded run with the net on is
-reproducible on one machine but may differ in its trajectory between CPUs of different vector
-widths.
+The value net (`ValueNet`) has two arithmetic paths, selectable per run ("SIMD value net"
+checkbox, `--simd-net on|off`, default on): hand-written `Vector256` kernels with a fixed
+reduction order — about 3× faster than the loops and bit-identical on every CPU — or the
+original plain loops (kept bit-exact against the pre-SIMD implementation by test). The two
+paths differ in the last bits of the dot products, so a seeded run with the net on reproduces
+exactly on any machine *with the same setting*, and may differ between settings.
 
 Measured on a 24³, no symmetry, breeder goal (Release, this machine): scalar ~390 steps/s,
 parallel children ~1 450, incremental ~150 000 in rollout; a training iteration costs ~0.5 ms

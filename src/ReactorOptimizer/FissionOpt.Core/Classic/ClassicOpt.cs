@@ -63,6 +63,8 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
     public int NStage => _nStage;
     public int NIteration => _nIteration;
     public bool UsesNet => _net != null;
+    /// <summary>True when the value net uses the SIMD kernels (false when there is no net).</summary>
+    public bool SimdNet => _net?.Simd ?? false;
     /// <summary>True when the four children of each step are evaluated on separate threads.</summary>
     public bool ParallelChildren => _parallelChildren;
     /// <summary>True when mutations are evaluated incrementally instead of by full re-evaluation.</summary>
@@ -78,7 +80,9 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
     /// Null = automatic (on whenever <see cref="IncrementalClassicEvaluator.Supports"/> the settings). Mathematically the
     /// same evaluation, but totals can differ from the scalar evaluator in the last bit, so a seed is only guaranteed to
     /// reproduce a run made with the same setting.</param>
-    public ClassicOpt(ClassicSettings settings, bool useNet, int seed, bool? parallelChildren = null, bool? incrementalEvaluation = null)
+    /// <param name="simdNet">Use the Vector256 kernels in the value net (faster; results reproducible on every CPU but
+    /// differ in the last bits from the scalar loops, so a seed reproduces a run only with the same setting).</param>
+    public ClassicOpt(ClassicSettings settings, bool useNet, int seed, bool? parallelChildren = null, bool? incrementalEvaluation = null, bool simdNet = true)
     {
         _settings = settings;
         _evaluator = new ClassicEvaluator(settings);
@@ -132,7 +136,7 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
         Restart();
         if (useNet)
         {
-            _net = new ClassicNet(settings, _rng);
+            _net = new ClassicNet(settings, _rng, simdNet);
             AppendParentTrajectory();
         }
         _parentFitness = CurrentFitness(_parent);

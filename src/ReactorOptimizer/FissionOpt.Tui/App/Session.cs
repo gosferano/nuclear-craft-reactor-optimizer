@@ -35,12 +35,13 @@ public sealed class ClassicSession : ISession
 
     private readonly string _modeText;
 
-    public ClassicSession(ClassicSettings settings, bool useNet, int seed, string fuelName, bool? incremental)
+    public ClassicSession(ClassicSettings settings, bool useNet, int seed, string fuelName, bool? incremental, bool simdNet)
     {
         _settings = settings;
         _fuelName = fuelName;
-        var opt = new ClassicOpt(settings, useNet, seed, incrementalEvaluation: incremental);
-        _modeText = opt.IncrementalEvaluation ? " [incremental]" : opt.ParallelChildren ? " [4 threads]" : "";
+        var opt = new ClassicOpt(settings, useNet, seed, incrementalEvaluation: incremental, simdNet: simdNet);
+        _modeText = (opt.IncrementalEvaluation ? " [incremental]" : opt.ParallelChildren ? " [4 threads]" : "")
+            + (opt.UsesNet ? opt.SimdNet ? " [simd net]" : " [scalar net]" : "");
         _runner = new OptimizerRunner<ClassicSample>(opt);
         _shown = new ClassicSample(settings.SizeX, settings.SizeY, settings.SizeZ);
     }
@@ -84,10 +85,13 @@ public sealed class OverhaulSession : ISession
     private readonly OverhaulSample _shown;
     public bool HasDesign { get; private set; }
 
-    public OverhaulSession(OverhaulSettings settings, int seed)
+    private readonly string _modeText;
+
+    public OverhaulSession(OverhaulSettings settings, int seed, bool simdNet)
     {
         _settings = settings;
-        var opt = new OverhaulOpt(settings, seed); // calls settings.Compute()
+        var opt = new OverhaulOpt(settings, seed, simdNet); // calls settings.Compute()
+        _modeText = opt.SimdNet ? " [simd net]" : " [scalar net]";
         _runner = new OptimizerRunner<OverhaulSample>(opt);
         _shown = new OverhaulSample(settings);
     }
@@ -103,12 +107,12 @@ public sealed class OverhaulSession : ISession
     public RunnerProgress Progress => _runner.Progress;
     public bool TryTakeLossHistory(double[] dest) => _runner.TryTakeLossHistory(dest);
 
-    public string StageText(RunnerProgress p) => p.Stage switch
+    public string StageText(RunnerProgress p) => (p.Stage switch
     {
         OverhaulOpt.StageTrain => $"Episode {p.Episode}, training iteration {p.Iteration}",
         OverhaulOpt.StageInfer => $"Episode {p.Episode}, inference iteration {p.Iteration}",
         _ => $"Episode {p.Episode}, rollout iteration {p.Iteration}",
-    };
+    }) + _modeText;
 
     public void ConfigurePanel(RunPanel panel) => panel.SetMode(t => OverhaulExport.Label(_settings, t), TileStyle.Overhaul);
 

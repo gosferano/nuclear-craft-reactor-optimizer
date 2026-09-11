@@ -22,7 +22,7 @@ public sealed class ClassicNet
     private readonly int _nTiles;
     private readonly double[] _features;
 
-    public ClassicNet(ClassicSettings settings, Rng rng)
+    public ClassicNet(ClassicSettings settings, Rng rng, bool simd = true)
     {
         _settings = settings;
         Array.Fill(_tileToFeature, -1);
@@ -34,10 +34,11 @@ public sealed class ClassicNet
         _nTiles = n;
         int nFeatures = _nTiles * 2 - 1 + NStatisticalFeatures;
         _features = new double[nFeatures];
-        _net = new ValueNet(nFeatures, LRate, NPool, rng);
+        _net = new ValueNet(nFeatures, LRate, NPool, rng, simd);
     }
 
     public int NFeatures => _net.NFeatures;
+    public bool Simd => _net.Simd;
     public int TrajectoryLength => _net.TrajectoryLength;
     public void NewTrajectory() => _net.NewTrajectory();
     public void FinishTrajectory(double target) => _net.FinishTrajectory(target);

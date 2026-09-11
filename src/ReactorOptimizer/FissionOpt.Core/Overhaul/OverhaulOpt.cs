@@ -49,10 +49,12 @@ public sealed class OverhaulOpt : IOptimizer<OverhaulSample>
     public int NStage => _nStage;
     public int NIteration => _nIteration;
     public int Seed => _rng.Seed;
+    public bool SimdNet => _net.Simd;
     public ReadOnlySpan<double> LossHistory => _lossHistory;
 
     /// <summary>Calls <c>settings.Compute()</c>, like the C++ constructor.</summary>
-    public OverhaulOpt(OverhaulSettings settings, int seed)
+    /// <param name="simdNet">Use the Vector256 kernels in the value net; see <see cref="ValueNet"/>.</param>
+    public OverhaulOpt(OverhaulSettings settings, int seed, bool simdNet = true)
     {
         _settings = settings;
         _rng = new Rng(seed);
@@ -67,7 +69,7 @@ public sealed class OverhaulOpt : IOptimizer<OverhaulSample>
 
         _parent = new OverhaulSample(settings);
         Restart();
-        _net = new OverhaulNet(settings, _rng);
+        _net = new OverhaulNet(settings, _rng, simdNet);
         _net.AppendTrajectory(_parent);
         _parentFitness = CurrentFitness(_parent);
         _localBest = AllFeasible(_parent) ? _parentFitness : 0.0;

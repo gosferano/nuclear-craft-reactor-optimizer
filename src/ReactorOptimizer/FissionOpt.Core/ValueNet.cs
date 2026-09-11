@@ -1,4 +1,6 @@
-using System.Numerics.Tensors;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 
 namespace FissionOpt.Core;
 
@@ -6,13 +8,17 @@ namespace FissionOpt.Core;
 /// The value network shared by both optimizers (FissionNet.cpp / OverhaulFissionNet.cpp): a
 /// 128→64→1 MLP with the leaky clipped activation <c>0.1x + clip(x, -1, 1)</c>, trained with Adam
 /// on minibatches drawn from a ring pool of (features, episode return) pairs. Feature extraction is
-/// the caller's job.
+/// the caller's job. Nothing allocates after construction except the pool growing towards its cap.
 ///
-/// The dense work (layer dot products, the gradient outer products expressed as row-wise axpy,
-/// the Adam updates) goes through <see cref="TensorPrimitives"/> so it uses SIMD. Nothing allocates
-/// after construction except the pool growing towards its cap. Summation order inside the SIMD
-/// reductions is fixed for a given vector width, so runs are reproducible on one machine but the
-/// last bits (and hence a run's trajectory) can differ between CPUs with different vector widths.
+/// Two arithmetic paths, chosen per instance:
+/// <list type="bullet">
+/// <item><b>SIMD</b> (<see cref="Simd"/> = true): hand-written <see cref="Vector256{T}"/> kernels. The
+/// shape is fixed at four lanes and the reduction order is spelled out in the code, so results are
+/// bit-identical on every CPU (AVX-512 machines use 256-bit registers; ARM emulates two 128-bit halves).</item>
+/// <item><b>Scalar</b> (false): the original plain loops. Differs from the SIMD path only in the summation
+/// order of the layer dot products, i.e. in the last bits.</item>
+/// </list>
+/// A seeded run therefore reproduces exactly on any machine as long as the same path is used.
 /// </summary>
 public sealed class ValueNet
 {
@@ -26,6 +32,7 @@ public sealed class ValueNet
     private readonly int _nFeatures;
     private readonly int _nPool;
     private readonly double _lRate;
+    private readonly bool _simd;
     private double _mCorrector = 1, _rCorrector = 1;
 
     private double[] _poolFeatures;
@@ -40,18 +47,20 @@ public sealed class ValueNet
     private readonly double[] _v1, _p1, _v2, _p2;
     private readonly double[] _batchInput, _batchTarget, _bv1, _bp1, _bv2, _bp2, _bOutV;
     private readonly double[] _gOut, _gwOut, _gv2, _gb2, _gw2, _gv1, _gb1, _gw1;
-    private readonly double[] _tmpA, _tmpB; // Adam scratch, sized to the largest parameter array
 
     public int NFeatures => _nFeatures;
     public int TrajectoryLength => _trajectoryLength;
     public int PoolSize => _poolSize;
+    /// <summary>True when the <see cref="Vector256{T}"/> kernels are used.</summary>
+    public bool Simd => _simd;
 
-    public ValueNet(int nFeatures, double lRate, int nPool, Rng rng)
+    public ValueNet(int nFeatures, double lRate, int nPool, Rng rng, bool simd = true)
     {
         _rng = rng;
         _nFeatures = nFeatures;
         _lRate = lRate;
         _nPool = nPool;
+        _simd = simd;
 
         int cap = Math.Min(1024, nPool);
         _poolFeatures = new double[cap * nFeatures];
@@ -81,9 +90,6 @@ public sealed class ValueNet
         _gv1 = new double[NMiniBatch * NLayer1];
         _gb1 = new double[NLayer1];
         _gw1 = new double[NLayer1 * nFeatures];
-        int maxLen = Math.Max(_w1.Length, _w2.Length);
-        _tmpA = new double[maxLen];
-        _tmpB = new double[maxLen];
     }
 
     public void NewTrajectory() => _trajectoryLength = 0;
@@ -124,20 +130,81 @@ public sealed class ValueNet
         }
     }
 
-    /// <summary>The activation: <c>v * leak + clip(v, -1, 1)</c>, element-wise into <paramref name="p"/>.</summary>
-    private static void Pwl(ReadOnlySpan<double> v, Span<double> p)
+    // ---------------------------------------------------------------- kernels
+    // Each kernel has a Vector256 body and a scalar body performing the same IEEE operations per
+    // element; only Dot's reduction order differs between the two.
+
+    /// <summary>
+    /// init + x · y. Scalar: the products are added to <paramref name="init"/> one by one, exactly like the
+    /// original loops. SIMD: four lane-wise partial sums combined as init + ((l0 + l1) + l2) + l3, then the tail.
+    /// </summary>
+    private double Dot(double init, ReadOnlySpan<double> x, ReadOnlySpan<double> y)
     {
-        TensorPrimitives.Clamp(v, -1.0, 1.0, p);
-        TensorPrimitives.MultiplyAdd(v, Leak, p, p);
+        int n = x.Length;
+        double sum = init;
+        int i = 0;
+        if (_simd)
+        {
+            ref double rx = ref MemoryMarshal.GetReference(x);
+            ref double ry = ref MemoryMarshal.GetReference(y);
+            var acc = Vector256<double>.Zero;
+            for (; i <= n - 4; i += 4)
+                acc += Vector256.LoadUnsafe(ref rx, (nuint)i) * Vector256.LoadUnsafe(ref ry, (nuint)i);
+            sum += ((acc.GetElement(0) + acc.GetElement(1)) + acc.GetElement(2)) + acc.GetElement(3);
+        }
+        for (; i < n; ++i)
+            sum += x[i] * y[i];
+        return sum;
     }
 
-    /// <summary>Dense layer: out[j] = b[j] + w[j,:] · x.</summary>
-    private static void Layer(ReadOnlySpan<double> w, ReadOnlySpan<double> b, ReadOnlySpan<double> x, Span<double> v)
+    /// <summary>dest += s · x, element-wise.</summary>
+    private void Axpy(ReadOnlySpan<double> x, double s, Span<double> dest)
+    {
+        int n = x.Length;
+        int i = 0;
+        if (_simd)
+        {
+            ref double rx = ref MemoryMarshal.GetReference(x);
+            ref double rd = ref MemoryMarshal.GetReference(dest);
+            var vs = Vector256.Create(s);
+            for (; i <= n - 4; i += 4)
+                (Vector256.LoadUnsafe(ref rd, (nuint)i) + vs * Vector256.LoadUnsafe(ref rx, (nuint)i)).StoreUnsafe(ref rd, (nuint)i);
+        }
+        for (; i < n; ++i)
+            dest[i] += s * x[i];
+    }
+
+    /// <summary>p = v·leak + clip(v, −1, 1), element-wise.</summary>
+    private void Pwl(ReadOnlySpan<double> v, Span<double> p)
+    {
+        int n = v.Length;
+        int i = 0;
+        if (_simd)
+        {
+            ref double rv = ref MemoryMarshal.GetReference(v);
+            ref double rp = ref MemoryMarshal.GetReference(p);
+            var leak = Vector256.Create(Leak);
+            var lo = Vector256.Create(-1.0);
+            var hi = Vector256.Create(1.0);
+            for (; i <= n - 4; i += 4)
+            {
+                var x = Vector256.LoadUnsafe(ref rv, (nuint)i);
+                (x * leak + Vector256.Min(Vector256.Max(x, lo), hi)).StoreUnsafe(ref rp, (nuint)i);
+            }
+        }
+        for (; i < n; ++i)
+            p[i] = v[i] * Leak + Math.Clamp(v[i], -1.0, 1.0);
+    }
+
+    /// <summary>Dense layer: v[j] = b[j] + w[j,:] · x.</summary>
+    private void Layer(ReadOnlySpan<double> w, ReadOnlySpan<double> b, ReadOnlySpan<double> x, Span<double> v)
     {
         int n = x.Length;
         for (int j = 0; j < v.Length; ++j)
-            v[j] = b[j] + TensorPrimitives.Dot(w.Slice(j * n, n), x);
+            v[j] = Dot(b[j], w.Slice(j * n, n), x);
     }
+
+    // ---------------------------------------------------------------- inference / training
 
     /// <summary>Mirrors <c>Net::infer</c>.</summary>
     public double Infer(ReadOnlySpan<double> x)
@@ -146,7 +213,7 @@ public sealed class ValueNet
         Pwl(_v1, _p1);
         Layer(_w2, _b2, _p1, _v2);
         Pwl(_v2, _p2);
-        return _bOut + TensorPrimitives.Dot(_wOut, _p2);
+        return Dot(_bOut, _wOut, _p2);
     }
 
     /// <summary>Mirrors <c>Net::train</c>: one Adam step on a random minibatch from the pool. Returns the batch MSE.</summary>
@@ -172,7 +239,7 @@ public sealed class ValueNet
             Pwl(v1, p1);
             Layer(_w2, _b2, p1, v2);
             Pwl(v2, p2);
-            _bOutV[i] = _bOut + TensorPrimitives.Dot(_wOut, p2);
+            _bOutV[i] = Dot(_bOut, _wOut, p2);
         }
         double loss = 0.0;
         for (int i = 0; i < NMiniBatch; ++i)
@@ -182,7 +249,8 @@ public sealed class ValueNet
         }
         loss /= NMiniBatch;
 
-        // Backward
+        // Backward. The gradient outer products are accumulated sample by sample (axpy), which is the
+        // same summation order as the reference loops.
         double gbOut = 0.0;
         for (int i = 0; i < NMiniBatch; ++i)
         {
@@ -193,37 +261,31 @@ public sealed class ValueNet
         for (int i = 0; i < NMiniBatch; ++i)
         {
             var p2 = _bp2.AsSpan(i * NLayer2, NLayer2);
-            // gwOut += gOut[i] * p2
-            TensorPrimitives.MultiplyAdd(p2, _gOut[i], _gwOut, _gwOut);
+            Axpy(p2, _gOut[i], _gwOut);
             // gv2 = gOut[i] * wOut ⊙ (leak + (|v2| < 1))
             var v2 = _bv2.AsSpan(i * NLayer2, NLayer2);
             var gv2 = _gv2.AsSpan(i * NLayer2, NLayer2);
             double g = _gOut[i];
             for (int j = 0; j < NLayer2; ++j)
                 gv2[j] = g * _wOut[j] * (Leak + (Math.Abs(v2[j]) < 1.0 ? 1.0 : 0.0));
-            TensorPrimitives.Add(gv2, _gb2, _gb2);
+            Axpy(gv2, 1.0, _gb2);
             // gw2[j,:] += gv2[j] * p1 ;  gp1 = Σ_j gv2[j] * w2[j,:]
             var p1 = _bp1.AsSpan(i * NLayer1, NLayer1);
             var gp1 = _gv1.AsSpan(i * NLayer1, NLayer1);
             gp1.Clear();
             for (int j = 0; j < NLayer2; ++j)
             {
-                var gw2Row = _gw2.AsSpan(j * NLayer1, NLayer1);
-                TensorPrimitives.MultiplyAdd(p1, gv2[j], gw2Row, gw2Row);
-                TensorPrimitives.MultiplyAdd(_w2.AsSpan(j * NLayer1, NLayer1), gv2[j], gp1, gp1);
+                Axpy(p1, gv2[j], _gw2.AsSpan(j * NLayer1, NLayer1));
+                Axpy(_w2.AsSpan(j * NLayer1, NLayer1), gv2[j], gp1);
             }
             // gv1 = gp1 ⊙ (leak + (|v1| < 1))
             var v1 = _bv1.AsSpan(i * NLayer1, NLayer1);
             for (int k = 0; k < NLayer1; ++k)
                 gp1[k] *= Leak + (Math.Abs(v1[k]) < 1.0 ? 1.0 : 0.0);
-            TensorPrimitives.Add(gp1, _gb1, _gb1);
-            // gw1[k,:] += gv1[k] * x
+            Axpy(gp1, 1.0, _gb1);
             var x = _batchInput.AsSpan(i * nf, nf);
             for (int k = 0; k < NLayer1; ++k)
-            {
-                var gw1Row = _gw1.AsSpan(k * nf, nf);
-                TensorPrimitives.MultiplyAdd(x, gp1[k], gw1Row, gw1Row);
-            }
+                Axpy(x, gp1[k], _gw1.AsSpan(k * nf, nf));
         }
 
         // Adam
@@ -243,28 +305,39 @@ public sealed class ValueNet
 
     /// <summary>
     /// Adam update, element-wise: m = β1·m + (1−β1)·g; r = β2·r + (1−β2)·g²;
-    /// w −= lr·m / ((1−β1ᵗ)·(√(r/(1−β2ᵗ)) + 1e−8)). Same operation order as the scalar loop.
+    /// w −= lr·m / ((1−β1ᵗ)·(√(r/(1−β2ᵗ)) + 1e−8)). Same operation order in both paths.
     /// </summary>
     private void Adam(double[] w, double[] m, double[] r, double[] g)
     {
         int n = w.Length;
-        var a = _tmpA.AsSpan(0, n);
-        var b = _tmpB.AsSpan(0, n);
         double mc = 1 - _mCorrector, rc = 1 - _rCorrector;
-        // m = MRate*m + (1-MRate)*g
-        TensorPrimitives.Multiply(m, MRate, m);
-        TensorPrimitives.MultiplyAdd(g, 1 - MRate, m, m);
-        // r = RRate*r + (1-RRate)*g*g
-        TensorPrimitives.Multiply(g, g, a);
-        TensorPrimitives.Multiply(r, RRate, r);
-        TensorPrimitives.MultiplyAdd(a, 1 - RRate, r, r);
-        // w -= lRate*m / (mc * (sqrt(r/rc) + 1e-8))
-        TensorPrimitives.Divide(r, rc, a);
-        TensorPrimitives.Sqrt(a, a);
-        TensorPrimitives.Add(a, 1e-8, a);
-        TensorPrimitives.Multiply(a, mc, a);
-        TensorPrimitives.Multiply(m, _lRate, b);
-        TensorPrimitives.Divide(b, a, b);
-        TensorPrimitives.Subtract(w, b, w);
+        int i = 0;
+        if (_simd)
+        {
+            ref double rw = ref MemoryMarshal.GetReference(w.AsSpan());
+            ref double rm = ref MemoryMarshal.GetReference(m.AsSpan());
+            ref double rr = ref MemoryMarshal.GetReference(r.AsSpan());
+            ref double rg = ref MemoryMarshal.GetReference(g.AsSpan());
+            var vM = Vector256.Create(MRate); var v1M = Vector256.Create(1 - MRate);
+            var vR = Vector256.Create(RRate); var v1R = Vector256.Create(1 - RRate);
+            var vLr = Vector256.Create(_lRate); var vMc = Vector256.Create(mc); var vRc = Vector256.Create(rc);
+            var eps = Vector256.Create(1e-8);
+            for (; i <= n - 4; i += 4)
+            {
+                var vg = Vector256.LoadUnsafe(ref rg, (nuint)i);
+                var vm = vM * Vector256.LoadUnsafe(ref rm, (nuint)i) + v1M * vg;
+                var vr = vR * Vector256.LoadUnsafe(ref rr, (nuint)i) + v1R * (vg * vg);
+                vm.StoreUnsafe(ref rm, (nuint)i);
+                vr.StoreUnsafe(ref rr, (nuint)i);
+                var vw = Vector256.LoadUnsafe(ref rw, (nuint)i);
+                (vw - vLr * vm / (vMc * (Vector256.Sqrt(vr / vRc) + eps))).StoreUnsafe(ref rw, (nuint)i);
+            }
+        }
+        for (; i < n; ++i)
+        {
+            m[i] = MRate * m[i] + (1 - MRate) * g[i];
+            r[i] = RRate * r[i] + (1 - RRate) * (g[i] * g[i]);
+            w[i] -= _lRate * m[i] / (mc * (Math.Sqrt(r[i] / rc) + 1e-8));
+        }
     }
 }
