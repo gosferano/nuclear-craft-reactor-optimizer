@@ -41,12 +41,12 @@ public sealed class MainWindow : Window
             Labels = new[] { "_Classic (pre-overhaul)", "_Overhaul" },
             Value = 0,
         };
-        _settingsTab = new View { Title = "_Settings", Width = Dim.Fill(), Height = Dim.Fill() };
+        _settingsTab = new View { Title = "_Settings", Width = Dim.Fill(), Height = Dim.Fill(), CanFocus = true };
         _classicSettings = new SettingsPanel();
         _overhaulSettings = new OverhaulSettingsPanel { Visible = false };
         _settingsTab.Add(_classicSettings, _overhaulSettings);
 
-        _blocksTab = new View { Title = "_Blocks", Width = Dim.Fill(), Height = Dim.Fill() };
+        _blocksTab = new View { Title = "_Blocks", Width = Dim.Fill(), Height = Dim.Fill(), CanFocus = true };
         _classicBlocks = new BlocksPanel();
         _overhaulBlocks = new OverhaulBlocksPanel { Visible = false };
         _blocksTab.Add(_classicBlocks, _overhaulBlocks);

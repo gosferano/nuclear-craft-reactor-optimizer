@@ -21,6 +21,7 @@ public sealed class BlocksPanel : View
     {
         Width = Dim.Fill();
         Height = Dim.Fill();
+        CanFocus = true; // containers must be focusable for their fields to receive focus
 
         Add(new Label { X = 1, Y = 0, Text = "Leave a limit blank for unlimited; 0 disables the block. Active coolers are disabled by default." });
         const int c0 = 1, c1 = 22, c2 = 34, c3 = 44, c4 = 58;

@@ -22,6 +22,7 @@ public sealed class RunPanel : View
         Title = "_Reactor";
         Width = Dim.Fill();
         Height = Dim.Fill();
+        CanFocus = true; // containers must be focusable for their fields to receive focus
 
         _progress = new Label { X = 1, Y = 0, Width = Dim.Fill(1), Text = "Not running. Configure settings and press F5 to run." };
         var reactorFrame = new FrameView { Title = "Design", X = 0, Y = 1, Width = Dim.Fill(36), Height = Dim.Fill() };

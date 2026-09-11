@@ -28,6 +28,7 @@ public sealed class SettingsPanel : View
     {
         Width = Dim.Fill();
         Height = Dim.Fill();
+        CanFocus = true; // containers must be focusable for their fields to receive focus
 
         var sizeLabel = new Label { X = 1, Y = 1, Text = "Interior size X × Y × Z (Y is vertical):" };
         _sizeX = Field(Pos.Right(sizeLabel) + 1, 1, 4, "5");

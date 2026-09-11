@@ -16,6 +16,7 @@ public sealed class OverhaulBlocksPanel : View
     {
         Width = Dim.Fill();
         Height = Dim.Fill();
+        CanFocus = true; // containers must be focusable for their fields to receive focus
         Add(new Label { X = 1, Y = 0, Text = "Max allowed per block type. Leave blank for unlimited; 0 disables the block." });
         const int rows = 20;
         for (int t = 0; t < NumLimited; ++t)
