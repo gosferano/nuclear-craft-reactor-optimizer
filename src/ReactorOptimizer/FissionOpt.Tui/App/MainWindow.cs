@@ -149,6 +149,9 @@ public sealed class MainWindow : Window
             _run.ShowLoss(_loss, _run.LossWidth);
         var p = _session.Progress;
         string state = p.Finished ? "Stopped" : p.Paused ? "Paused" : $"{p.StepsPerSecond:0} steps/s";
+#if DEBUG
+        state += "  [DEBUG BUILD: ~3.5× slower, run with -c Release]";
+#endif
         _run.ShowProgress($"{_session.StageText(p)}  —  {state}  (seed {_session.Seed}, {p.Steps:N0} steps)");
         if (p.Finished || hadDesign != _session.HasDesign) UpdateControls();
         return true;

@@ -9,6 +9,8 @@
   </ItemGroup>
 
   <PropertyGroup>
+    <!-- The optimizer is ~3.5x slower in Debug; make plain `dotnet run` build Release. -->
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
