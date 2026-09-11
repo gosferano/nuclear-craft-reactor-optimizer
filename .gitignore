@@ -58,3 +58,6 @@ nunit-*.xml
 
 # Custom
 .idea/
+
+# C++ oracle binary
+reference/oracle/build/

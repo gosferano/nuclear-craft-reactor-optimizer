@@ -1,0 +1,9 @@
+[submodule "reference/FissionOpt"]
+	path = reference/FissionOpt
+	url = https://github.com/cyb0124/FissionOpt.git
+[submodule "reference/xtl"]
+	path = reference/xtl
+	url = https://github.com/xtensor-stack/xtl.git
+[submodule "reference/xtensor"]
+	path = reference/xtensor
+	url = https://github.com/xtensor-stack/xtensor.git
