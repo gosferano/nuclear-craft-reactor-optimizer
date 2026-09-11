@@ -1,6 +1,7 @@
 using FissionOpt.Core;
 using FissionOpt.Core.Classic;
 using Terminal.Gui.Drawing;
+using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Attribute = Terminal.Gui.Drawing.Attribute;
 
@@ -22,6 +23,23 @@ public sealed class ReactorView : View
     {
         CanFocus = true;
         ViewportSettings = ViewportSettingsFlags.HasScrollBars;
+        // Scrolling: mouse wheel, arrows and page keys move the viewport over the (possibly larger) content.
+        AddCommand(Command.ScrollDown, () => ScrollVertical(1));
+        AddCommand(Command.ScrollUp, () => ScrollVertical(-1));
+        AddCommand(Command.ScrollRight, () => ScrollHorizontal(1));
+        AddCommand(Command.ScrollLeft, () => ScrollHorizontal(-1));
+        AddCommand(Command.PageDown, () => ScrollVertical(Math.Max(1, Viewport.Height)));
+        AddCommand(Command.PageUp, () => ScrollVertical(-Math.Max(1, Viewport.Height)));
+        MouseBindings.Add(MouseFlags.WheeledDown, Command.ScrollDown);
+        MouseBindings.Add(MouseFlags.WheeledUp, Command.ScrollUp);
+        MouseBindings.Add(MouseFlags.WheeledRight, Command.ScrollRight);
+        MouseBindings.Add(MouseFlags.WheeledLeft, Command.ScrollLeft);
+        KeyBindings.Add(Key.CursorDown, Command.ScrollDown);
+        KeyBindings.Add(Key.CursorUp, Command.ScrollUp);
+        KeyBindings.Add(Key.CursorRight, Command.ScrollRight);
+        KeyBindings.Add(Key.CursorLeft, Command.ScrollLeft);
+        KeyBindings.Add(Key.PageDown, Command.PageDown);
+        KeyBindings.Add(Key.PageUp, Command.PageUp);
     }
 
     /// <summary>Sets how tiles are labelled and colored (classic vs overhaul).</summary>
