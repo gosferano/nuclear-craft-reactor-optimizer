@@ -11,7 +11,7 @@ namespace FissionOpt.Core.Classic;
 /// read from that same thread; a UI should copy it (see <see cref="ClassicSample.CopyFrom"/>)
 /// when <see cref="NeedsRedrawBest"/> reports a change.
 /// </summary>
-public sealed class ClassicOpt : IOptimizer<ClassicSample>
+public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
 {
     public const int StageTrain = -2;
     public const int StageInfer = -1;
@@ -19,8 +19,19 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>
     public const int InteractiveMin = 1024;
     public const int NLossHistory = 256;
 
+    /// <summary>Grids at least this large evaluate their four children on separate threads (see <see cref="ParallelChildren"/>).</summary>
+    public const int ParallelChildrenThreshold = 300;
+
     private readonly ClassicSettings _settings;
     private readonly ClassicEvaluator _evaluator;
+    // Parallel children: helper thread k evaluates _children[k] with _helperEvaluators[k]; the main thread does child 0.
+    private readonly bool _parallelChildren;
+    private readonly Thread[] _helpers = Array.Empty<Thread>();
+    private readonly ClassicEvaluator[] _helperEvaluators = Array.Empty<ClassicEvaluator>();
+    private readonly ManualResetEventSlim[] _helperStart = Array.Empty<ManualResetEventSlim>();
+    private readonly CountdownEvent? _helperDone;
+    private readonly Exception?[] _helperErrors = Array.Empty<Exception?>();
+    private volatile bool _shutdown;
     private readonly List<Coord> _allowedCoords = new();
     private readonly List<int> _allowedTiles = new();
     private int _nEpisode, _nStage, _nIteration;
@@ -45,15 +56,37 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>
     public int NStage => _nStage;
     public int NIteration => _nIteration;
     public bool UsesNet => _net != null;
+    /// <summary>True when the four children of each step are evaluated on separate threads.</summary>
+    public bool ParallelChildren => _parallelChildren;
     public int Seed => _rng.Seed;
     /// <summary>Rolling window of the last <see cref="NLossHistory"/> training losses (oldest first; zeros until filled).</summary>
     public ReadOnlySpan<double> LossHistory => _lossHistory;
 
-    public ClassicOpt(ClassicSettings settings, bool useNet, int seed)
+    /// <param name="parallelChildren">Evaluate the four children of each step concurrently. Null = automatic
+    /// (on for grids of at least <see cref="ParallelChildrenThreshold"/> tiles). Results are identical either way.</param>
+    public ClassicOpt(ClassicSettings settings, bool useNet, int seed, bool? parallelChildren = null)
     {
         _settings = settings;
         _evaluator = new ClassicEvaluator(settings);
         _rng = new Rng(seed);
+        _parallelChildren = parallelChildren ?? settings.Volume >= ParallelChildrenThreshold;
+        if (_parallelChildren)
+        {
+            int n = _children.Length - 1;
+            _helpers = new Thread[n];
+            _helperEvaluators = new ClassicEvaluator[n];
+            _helperStart = new ManualResetEventSlim[n];
+            _helperErrors = new Exception?[n];
+            _helperDone = new CountdownEvent(n);
+            for (int k = 0; k < n; ++k)
+            {
+                _helperEvaluators[k] = new ClassicEvaluator(settings);
+                _helperStart[k] = new ManualResetEventSlim(false, spinCount: 2000);
+                int index = k;
+                _helpers[k] = new Thread(() => HelperLoop(index), 16 * 1024 * 1024) { IsBackground = true, Name = "FissionOpt child " + (k + 1) };
+                _helpers[k].Start();
+            }
+        }
         _maxConverge = Math.Min(7 * 7 * 7, settings.Volume) * 16;
         _bestChanged = true;
 
@@ -178,7 +211,8 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>
         }
     }
 
-    private void MutateAndEvaluate(ClassicSample sample, int x, int y, int z)
+    /// <summary>The RNG-consuming half of <c>mutateAndEvaluate</c>: pick and apply a tile change, keeping the budget counters consistent.</summary>
+    private void Mutate(ClassicSample sample, int x, int y, int z)
     {
         int nSym = GetNSym(x, y, z);
         int oldTile = sample.State[x, y, z];
@@ -193,7 +227,59 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>
         if (newTile != Air)
             sample.Limit[newTile] -= nSym;
         SetTileWithSym(sample, x, y, z, newTile);
-        _evaluator.Run(sample.State, sample.Value);
+    }
+
+    /// <summary>
+    /// Evaluates all children. Mutations were already drawn sequentially, and the evaluator is a pure
+    /// function of the grid, so running the four evaluations concurrently yields exactly the results
+    /// the sequential loop would.
+    /// </summary>
+    private void EvaluateChildren()
+    {
+        if (!_parallelChildren)
+        {
+            foreach (var child in _children)
+                _evaluator.Run(child.State, child.Value);
+            return;
+        }
+        foreach (var start in _helperStart)
+            start.Set();
+        _evaluator.Run(_children[0].State, _children[0].Value);
+        _helperDone!.Wait();
+        _helperDone.Reset();
+        for (int k = 0; k < _helperErrors.Length; ++k)
+            if (_helperErrors[k] != null)
+                throw new InvalidOperationException("child evaluation failed on a helper thread", _helperErrors[k]);
+    }
+
+    private void HelperLoop(int k)
+    {
+        var start = _helperStart[k];
+        var evaluator = _helperEvaluators[k];
+        while (true)
+        {
+            start.Wait();
+            if (_shutdown) return;
+            start.Reset();
+            try
+            {
+                var child = _children[k + 1];
+                evaluator.Run(child.State, child.Value);
+            }
+            catch (Exception e)
+            {
+                _helperErrors[k] = e;
+            }
+            _helperDone!.Signal();
+        }
+    }
+
+    /// <summary>Stops the helper threads (if any). Safe to call more than once.</summary>
+    public void Dispose()
+    {
+        _shutdown = true;
+        foreach (var start in _helperStart)
+            start.Set();
     }
 
     /// <summary>Mirrors <c>Opt::step</c>: one training iteration, or one hill-climbing iteration (four mutated children).</summary>
@@ -269,7 +355,12 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>
             var child = _children[i];
             child.State.CopyFrom(_parent.State);
             Array.Copy(_parent.Limit, child.Limit, NumPlaceable);
-            MutateAndEvaluate(child, _rng.NextInt(_settings.SizeX - 1), _rng.NextInt(_settings.SizeY - 1), _rng.NextInt(_settings.SizeZ - 1));
+            Mutate(child, _rng.NextInt(_settings.SizeX - 1), _rng.NextInt(_settings.SizeY - 1), _rng.NextInt(_settings.SizeZ - 1));
+        }
+        EvaluateChildren();
+        for (int i = 0; i < _children.Length; ++i)
+        {
+            var child = _children[i];
             double fitness = CurrentFitness(child);
             if (i == 0 || fitness > bestFitness)
             {

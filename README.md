@@ -70,6 +70,14 @@ value-net toggle). Add `--mode overhaul` for the post-overhaul optimizer (`--mod
 is printed on the first line; the same seed reproduces the run. `--out` writes planner JSON
 in the same shape leu-235.com saves for each mode.
 
+## Performance notes
+
+The optimizer runs on one background thread, exactly like the original. In classic mode the
+four children of each step are evaluated on separate threads for grids of 300+ tiles
+(`--parallel auto|on|off` in headless mode); the mutations are still drawn sequentially,
+so a seed reproduces the same run with or without it. Measured on a 24³, no symmetry:
+~390 → ~1450 steps/s. Always build Release — Debug is ~3.5× slower.
+
 ## Presets
 
 The fuel, cooling-rate and tile-name tables in `FissionOpt.Core/Presets/*.g.cs` are

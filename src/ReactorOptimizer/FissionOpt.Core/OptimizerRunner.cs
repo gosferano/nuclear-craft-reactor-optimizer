@@ -151,5 +151,9 @@ public sealed class OptimizerRunner<TSample> : IDisposable where TSample : class
         }
     }
 
-    public void Dispose() => Stop();
+    public void Dispose()
+    {
+        Stop();
+        (_opt as IDisposable)?.Dispose();
+    }
 }
