@@ -43,6 +43,22 @@ as `c++`, or set `CXX`). To build it by hand:
 reference/oracle/build.sh
 ```
 
+## Running headless
+
+```bash
+dotnet run -c Release --project src/ReactorOptimizer/FissionOpt.Tui -- headless --size 5x5x5 --fuel LEU-235 --seconds 60 --seed 1 --out reactor.json
+```
+
+`--help` lists every flag (fuel/config/rate presets, per-block limits, goal, symmetry,
+value-net toggle). The seed is printed on the first line; the same seed reproduces the run.
+`--out` writes Hellrage Reactor Planner JSON, the same shape leu-235.com saves.
+
+## Presets
+
+The fuel, cooling-rate and tile-name tables in `FissionOpt.Core/Presets/*.g.cs` are
+generated from the upstream JavaScript by `tools/extract_presets.py`; re-run it rather
+than editing them.
+
 ## Testing
 
 ```bash
