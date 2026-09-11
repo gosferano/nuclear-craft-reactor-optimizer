@@ -43,6 +43,19 @@ as `c++`, or set `CXX`). To build it by hand:
 reference/oracle/build.sh
 ```
 
+## Running the TUI
+
+```bash
+dotnet run -c Release --project src/ReactorOptimizer/FissionOpt.Tui
+```
+
+Three tabs (Alt+S / Alt+B / Alt+R): **Settings** (size, searchable fuel presets or manual
+power/heat, goal, symmetry, toggles, seed), **Blocks** (cooling rates and per-block limits
+with the Default / E2E / PO3 presets), **Reactor** (live design, metrics, block counts,
+training-loss sparkline). F5 runs, F6 pauses/resumes, F7 stops, F8 saves Hellrage JSON,
+Ctrl+Q quits. Axes are shown the way leu-235.com and the planner show them (X × Y × Z,
+Y vertical); internally the layer axis is x. Active coolers are drawn in reverse video.
+
 ## Running headless
 
 ```bash

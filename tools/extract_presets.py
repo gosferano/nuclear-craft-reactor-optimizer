@@ -100,9 +100,9 @@ def classic():
     out.append("    /// <summary>Multipliers applied to (power, heat) for third-party fuels; see the notes under the fuel table.</summary>")
     out.append("    public static readonly FuelFactor[] FuelFactors =")
     out.append("    {")
-    labels = {"br": "ExtremeReactors Yellorium/Blutonium (from LEU-235 Normal)",
-              "ic2": "IC2 Enriched Uranium (from LEU-235 Normal)",
-              "ic2mox": "IC2 MOX (from MOX-239)"}
+    labels = {"br": "ExtremeReactors Yellorium/Blutonium (use LEU-235)",
+              "ic2": "IC2 Enriched Uranium (use LEU-235)",
+              "ic2mox": "IC2 MOX (use MOX-239)"}
     for pid, (a, b) in factors.items():
         out.append("        new(%s, %s, %s.0 / %s.0)," % (cs_str(pid), cs_str(labels[pid]), a, b))
     out.append("    };\n")

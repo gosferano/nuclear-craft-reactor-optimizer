@@ -177,9 +177,9 @@ public static partial class ClassicPresets
     /// <summary>Multipliers applied to (power, heat) for third-party fuels; see the notes under the fuel table.</summary>
     public static readonly FuelFactor[] FuelFactors =
     {
-        new("br", "ExtremeReactors Yellorium/Blutonium (from LEU-235 Normal)", 8.0 / 9.0),
-        new("ic2", "IC2 Enriched Uranium (from LEU-235 Normal)", 18.0 / 19.0),
-        new("ic2mox", "IC2 MOX (from MOX-239)", 9.0 / 7.0),
+        new("br", "ExtremeReactors Yellorium/Blutonium (use LEU-235)", 8.0 / 9.0),
+        new("ic2", "IC2 Enriched Uranium (use LEU-235)", 18.0 / 19.0),
+        new("ic2mox", "IC2 MOX (use MOX-239)", 9.0 / 7.0),
     };
 
     /// <summary>Two-character labels indexed by cooler type 0–14, then Cell, Moderator, Air (18 entries).</summary>
