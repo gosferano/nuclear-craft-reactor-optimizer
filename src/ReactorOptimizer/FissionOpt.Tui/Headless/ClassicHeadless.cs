@@ -22,7 +22,9 @@ public static class ClassicHeadless
           --goal power|breeder|efficiency   (default power)
           --sym x,y,z | --sym none          mirror symmetries (default x,y,z)
           --no-net                disable the value network
-          --parallel auto|on|off  evaluate the 4 children of each step on separate threads (auto: on for >= 300 tiles)
+          --incremental auto|on|off  evaluate mutations incrementally (auto: on unless active coolers + accessibility)
+          --parallel auto|on|off  evaluate the 4 children of each step on separate threads (auto: on for >= 300 tiles;
+                                  only used when incremental evaluation is off)
           --no-heat-neutral       allow heat-positive designs
           --no-accessible         don't require active coolers to be reachable from the casing
           --seed N                RNG seed (default 0)
@@ -39,7 +41,7 @@ public static class ClassicHeadless
         var limits = new List<(string label, int n)>();
         string goal = "power", sym = "x,y,z";
         bool useNet = true, heatNeutral = true, accessible = true, quiet = false;
-        bool? parallel = null;
+        bool? parallel = null, incremental = null;
         int seed = 0; double seconds = 30; long? steps = null; string? outFile = null;
 
         for (int i = 0; i < args.Length; ++i)
@@ -66,6 +68,9 @@ public static class ClassicHeadless
                 case "--goal": goal = Next(); break;
                 case "--sym": sym = Next(); break;
                 case "--no-net": useNet = false; break;
+                case "--incremental":
+                    incremental = Next().ToLowerInvariant() switch { "auto" => null, "on" => true, "off" => false, var v => throw new ArgumentException("--incremental expects auto|on|off, got " + v) };
+                    break;
                 case "--parallel":
                     parallel = Next().ToLowerInvariant() switch { "auto" => null, "on" => true, "off" => false, var v => throw new ArgumentException("--parallel expects auto|on|off, got " + v) };
                     break;
@@ -136,8 +141,8 @@ public static class ClassicHeadless
 
         Console.WriteLine($"seed={seed} size={settings.SizeX}x{settings.SizeY}x{settings.SizeZ} fuel={fuelName} power={settings.FuelBasePower} heat={settings.FuelBaseHeat} rates={ratePreset.Config} goal={settings.Goal} sym={sym} net={useNet} heatNeutral={heatNeutral} accessible={accessible}");
 
-        using var opt = new ClassicOpt(settings, useNet, seed, parallel);
-        Console.WriteLine($"parallel children: {opt.ParallelChildren}");
+        using var opt = new ClassicOpt(settings, useNet, seed, parallel, incremental);
+        Console.WriteLine($"incremental evaluation: {opt.IncrementalEvaluation}, parallel children: {opt.ParallelChildren}");
         var sw = Stopwatch.StartNew();
         long n = 0;
         while (steps.HasValue ? n < steps.Value : sw.Elapsed.TotalSeconds < seconds)

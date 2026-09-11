@@ -9,6 +9,11 @@ namespace FissionOpt.Core.Classic;
 /// The five loops in <see cref="Run"/> are ordered and the order is semantic: cooler activation
 /// depends on other coolers' already-computed active state (Water → Gold → Iron chains). Do not
 /// merge or reorder them.
+///
+/// The totals are assembled from integer counters at the end (cell multiplier sums, moderator
+/// multiplier sum, active-cooler counts per tile ID) rather than accumulated in scan order as the
+/// C++ does. Mathematically identical; it can differ from the C++ in the last bit, and it makes the
+/// results bit-identical to <see cref="IncrementalClassicEvaluator"/>, which keeps the same counters.
 /// </summary>
 public sealed class ClassicEvaluator
 {
@@ -20,6 +25,7 @@ public sealed class ClassicEvaluator
     private readonly bool[] _isModeratorInLine;
     private readonly bool[] _visited;
     private readonly int[] _stack;
+    private readonly int[] _activeCount = new int[NumCoolerIds];
     private Grid3 _state = null!;
     private int[] _s = null!; // _state.Data
 
@@ -187,6 +193,9 @@ public sealed class ClassicEvaluator
         _s = state.Data;
         var settings = _settings;
         var rates = settings.CoolingRates;
+        long cellMultSum = 0, cellHeatSum = 0, modMultSum = 0;
+        var activeCount = _activeCount;
+        Array.Clear(activeCount);
 
         // Pass 1: cell multipliers, and the rule (cooler type) governing each cooler tile.
         for (int x = 0; x < _sizeX; ++x)
@@ -201,8 +210,8 @@ public sealed class ClassicEvaluator
                 _mults[i] = mult;
                 _rules[i] = -1;
                 ++result.Breed;
-                result.PowerMult += mult;
-                result.HeatMult += mult * (mult + 1) / 2.0;
+                cellMultSum += mult;
+                cellHeatSum += mult * (mult + 1) / 2;
             }
             else
             {
@@ -242,8 +251,7 @@ public sealed class ClassicEvaluator
                 if (mult != 0)
                 {
                     _isActive[i] = true;
-                    result.PowerMult += mult * (ModPower / 6.0);
-                    result.HeatMult += mult * (ModHeat / 6.0);
+                    modMultSum += mult;
                 }
                 else if (!_isModeratorInLine[i])
                 {
@@ -349,12 +357,19 @@ public sealed class ClassicEvaluator
                 if (_rules[i] == Iron)
                     _isActive[i] = CountActiveNeighbors(Gold, x, y, z) != 0;
                 if (_isActive[i])
-                    result.Cooling += rates[tile];
+                    ++activeCount[tile];
                 else
                     result.InvalidTiles.Add(new Coord(x, y, z));
             }
         }
 
+        result.PowerMult = cellMultSum + modMultSum * (ModPower / 6.0);
+        result.HeatMult = cellHeatSum + modMultSum * (ModHeat / 6.0);
+        double cooling = 0.0;
+        for (int t = 0; t < NumCoolerIds; ++t)
+            if (activeCount[t] != 0)
+                cooling += activeCount[t] * rates[t];
+        result.Cooling = cooling;
         result.Compute(settings);
     }
 }

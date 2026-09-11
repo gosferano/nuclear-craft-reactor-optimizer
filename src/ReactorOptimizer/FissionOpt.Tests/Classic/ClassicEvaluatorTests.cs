@@ -37,12 +37,12 @@ public sealed class ClassicEvaluatorTests
         new ClassicEvaluator(s).Run(g, e);
 
         Assert.Equal(1, e.Breed);
-        Assert.Equal(1.3333333333333335, e.PowerMult); // 1 + 1/6 + 1/6, accumulated in that order
-        Assert.Equal(1.6666666666666665, e.HeatMult);
+        Assert.Equal(1 + 2 * (1.0 / 6.0), e.PowerMult, 1e-12);
+        Assert.Equal(1 + 2 * (2.0 / 6.0), e.HeatMult, 1e-12);
         Assert.Equal(800.0, e.Cooling); // 8 waters next to active moderators + 1 active water next to the cell
         Assert.Equal(new[] { new Coord(1, 0, 0), new Coord(1, 0, 2), new Coord(1, 2, 0), new Coord(1, 2, 2) }, e.InvalidTiles);
         Assert.Equal(1.0, e.DutyCycle);
-        Assert.Equal(160.00000000000003, e.Power);
+        Assert.Equal(160.0, e.Power, 1e-9);
     }
 
     [Fact]

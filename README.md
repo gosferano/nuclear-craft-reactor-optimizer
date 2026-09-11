@@ -72,11 +72,24 @@ in the same shape leu-235.com saves for each mode.
 
 ## Performance notes
 
-The optimizer runs on one background thread, exactly like the original. In classic mode the
-four children of each step are evaluated on separate threads for grids of 300+ tiles
-(`--parallel auto|on|off` in headless mode); the mutations are still drawn sequentially,
-so a seed reproduces the same run with or without it. Measured on a 24³, no symmetry:
-~390 → ~1450 steps/s. Always build Release — Debug is ~3.5× slower.
+The optimizer runs on one background thread, exactly like the original. Two classic-mode
+accelerations exist, both toggleable and both tested to reproduce the identical run for a seed:
+
+- **Incremental evaluation** (`--incremental auto|on|off`, checkbox in the TUI): mutations are
+  evaluated by updating only the tiles a change can reach, with undo; the scalar evaluator
+  (`ClassicEvaluator`) remains the reference and both assemble their totals from the same
+  integer counters, so results are bit-identical. Automatic unless active coolers are enabled
+  *and* must be accessible (that connectivity check is global), in which case it falls back.
+- **Parallel children** (`--parallel auto|on|off`): when incremental evaluation is off and the
+  grid has 300+ tiles, the four children of each step are evaluated on separate threads.
+
+Measured on a 24³, no symmetry, breeder goal (Release, this machine): scalar ~390 steps/s,
+parallel children ~1 450, incremental ~40 000 with the value net (the net is then the
+bottleneck) and ~150 000 without it. Always build Release — Debug is ~3.5× slower.
+
+One consequence of the counter-based totals: the port's classic double totals can differ
+from the C++ in the last bit (summation order), so the classic oracle test compares those
+to 1e-9 relative and everything else exactly.
 
 ## Presets
 

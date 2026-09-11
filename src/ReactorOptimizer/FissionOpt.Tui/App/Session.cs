@@ -33,11 +33,15 @@ public sealed class ClassicSession : ISession
     private readonly ClassicSample _shown;
     public bool HasDesign { get; private set; }
 
-    public ClassicSession(ClassicSettings settings, bool useNet, int seed, string fuelName)
+    private readonly string _modeText;
+
+    public ClassicSession(ClassicSettings settings, bool useNet, int seed, string fuelName, bool? incremental)
     {
         _settings = settings;
         _fuelName = fuelName;
-        _runner = new OptimizerRunner<ClassicSample>(new ClassicOpt(settings, useNet, seed));
+        var opt = new ClassicOpt(settings, useNet, seed, incrementalEvaluation: incremental);
+        _modeText = opt.IncrementalEvaluation ? " [incremental]" : opt.ParallelChildren ? " [4 threads]" : "";
+        _runner = new OptimizerRunner<ClassicSample>(opt);
         _shown = new ClassicSample(settings.SizeX, settings.SizeY, settings.SizeZ);
     }
 
@@ -52,12 +56,12 @@ public sealed class ClassicSession : ISession
     public RunnerProgress Progress => _runner.Progress;
     public bool TryTakeLossHistory(double[] dest) => _runner.TryTakeLossHistory(dest);
 
-    public string StageText(RunnerProgress p) => p.Stage switch
+    public string StageText(RunnerProgress p) => (p.Stage switch
     {
         ClassicOpt.StageTrain => $"Episode {p.Episode}, training iteration {p.Iteration}",
         ClassicOpt.StageInfer => $"Episode {p.Episode}, inference iteration {p.Iteration}",
         _ => $"Episode {p.Episode}, stage {p.Stage}, iteration {p.Iteration}",
-    };
+    }) + _modeText;
 
     public void ConfigurePanel(RunPanel panel) => panel.SetMode(ClassicExport.Label, TileStyle.Classic);
 

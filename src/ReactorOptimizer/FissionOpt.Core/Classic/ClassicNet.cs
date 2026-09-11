@@ -55,6 +55,40 @@ public sealed class ClassicNet
         return _net.Infer(_features);
     }
 
+    public void AppendTrajectory(ReadOnlySpan<int> countByTile, ReadOnlySpan<int> invalidByTile, ClassicEvaluation value)
+    {
+        ExtractFeatures(countByTile, invalidByTile, value, _features);
+        _net.AppendTrajectory(_features);
+    }
+
+    public double Infer(ReadOnlySpan<int> countByTile, ReadOnlySpan<int> invalidByTile, ClassicEvaluation value)
+    {
+        ExtractFeatures(countByTile, invalidByTile, value, _features);
+        return _net.Infer(_features);
+    }
+
+    /// <summary>Same features as <see cref="ExtractFeatures(ClassicSample, double[])"/>, from per-tile-ID counts instead of a materialized grid.</summary>
+    public void ExtractFeatures(ReadOnlySpan<int> countByTile, ReadOnlySpan<int> invalidByTile, ClassicEvaluation v, double[] dest)
+    {
+        int nf = dest.Length;
+        Array.Clear(dest);
+        for (int t = 0; t <= Air; ++t)
+        {
+            int f = _tileToFeature[t];
+            if (f < 0) continue;
+            dest[f] += countByTile[t];
+            if (t != Air) dest[_nTiles + f] += invalidByTile[t];
+        }
+        dest[nf - 1] = v.PowerMult;
+        dest[nf - 2] = v.HeatMult;
+        dest[nf - 3] = v.Cooling / _settings.FuelBaseHeat;
+        double volume = _settings.SizeX * _settings.SizeY * _settings.SizeZ;
+        for (int i = 0; i < nf; ++i)
+            dest[i] /= volume;
+        dest[nf - 4] = v.DutyCycle;
+        dest[nf - 5] = v.Efficiency;
+    }
+
     /// <summary>Mirrors <c>Net::extractFeatures</c>.</summary>
     public void ExtractFeatures(ClassicSample sample, double[] dest)
     {

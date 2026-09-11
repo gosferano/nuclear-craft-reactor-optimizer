@@ -20,7 +20,7 @@ public sealed class SettingsPanel : View
     private readonly ObservableCollection<string> _fuelItems = new();
     private readonly List<ClassicFuelPreset> _filtered = new();
     private readonly OptionSelector _goal;
-    private readonly CheckBox _symX, _symY, _symZ, _accessible, _heatNeutral, _useNet;
+    private readonly CheckBox _symX, _symY, _symZ, _accessible, _heatNeutral, _useNet, _incremental;
     private readonly Label _fuelLabel;
     private string _fuelName = "";
 
@@ -79,9 +79,10 @@ public sealed class SettingsPanel : View
         _symY = Check(2, 10, "Y", true);
         _symZ = Check(2, 11, "Z", true);
         _useNet = Check(0, 13, "Use reinforcement learning (value network)", true);
-        var seedLabel = new Label { X = 0, Y = 15, Text = "Seed:" };
-        _seed = Field(Pos.Right(seedLabel) + 1, 15, 12, "0");
-        optFrame.Add(goalLabel, _goal, _accessible, _heatNeutral, symLabel, _symX, _symY, _symZ, _useNet, seedLabel, _seed);
+        _incremental = Check(0, 14, "Incremental evaluation (falls back to full evaluation if active coolers must be accessible)", true);
+        var seedLabel = new Label { X = 0, Y = 16, Text = "Seed:" };
+        _seed = Field(Pos.Right(seedLabel) + 1, 16, 12, "0");
+        optFrame.Add(goalLabel, _goal, _accessible, _heatNeutral, symLabel, _symX, _symY, _symZ, _useNet, _incremental, seedLabel, _seed);
         Add(optFrame);
 
         _search.TextChanged += (_, _) => RefreshFuelList();
@@ -141,6 +142,8 @@ public sealed class SettingsPanel : View
 
     public string FuelName => _fuelName;
     public bool UseNet => _useNet.Value == CheckState.Checked;
+    /// <summary>Null = automatic; false = force the scalar evaluator.</summary>
+    public bool? Incremental => _incremental.Value == CheckState.Checked ? null : false;
 
     public int Seed => int.TryParse(_seed.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var s)
         ? s : throw new ArgumentException("Seed must be an integer");
@@ -176,7 +179,7 @@ public sealed class SettingsPanel : View
 
     public void SetEnabledAll(bool enabled)
     {
-        foreach (var v in new View[] { _sizeX, _sizeY, _sizeZ, _power, _heat, _search, _seed, _fuelList, _goal, _symX, _symY, _symZ, _accessible, _heatNeutral, _useNet })
+        foreach (var v in new View[] { _sizeX, _sizeY, _sizeZ, _power, _heat, _search, _seed, _fuelList, _goal, _symX, _symY, _symZ, _accessible, _heatNeutral, _useNet, _incremental })
             v.Enabled = enabled;
     }
 }

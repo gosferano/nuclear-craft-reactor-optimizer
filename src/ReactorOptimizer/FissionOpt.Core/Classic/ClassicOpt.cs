@@ -32,6 +32,13 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
     private readonly CountdownEvent? _helperDone;
     private readonly Exception?[] _helperErrors = Array.Empty<Exception?>();
     private volatile bool _shutdown;
+    // Incremental evaluation: the parent grid is evaluated in place by _inc; children are evaluated as
+    // parent + mutation with undo, and only the winning mutation is applied.
+    private readonly bool _incremental;
+    private readonly IncrementalClassicEvaluator? _inc;
+    private readonly int[][] _childLimit = Array.Empty<int[]>();
+    private readonly ClassicEvaluation[] _childValue = Array.Empty<ClassicEvaluation>();
+    private readonly (int x, int y, int z, int tile)[] _childMutation = Array.Empty<(int, int, int, int)>();
     private readonly List<Coord> _allowedCoords = new();
     private readonly List<int> _allowedTiles = new();
     private int _nEpisode, _nStage, _nIteration;
@@ -58,18 +65,28 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
     public bool UsesNet => _net != null;
     /// <summary>True when the four children of each step are evaluated on separate threads.</summary>
     public bool ParallelChildren => _parallelChildren;
+    /// <summary>True when mutations are evaluated incrementally instead of by full re-evaluation.</summary>
+    public bool IncrementalEvaluation => _incremental;
     public int Seed => _rng.Seed;
     /// <summary>Rolling window of the last <see cref="NLossHistory"/> training losses (oldest first; zeros until filled).</summary>
     public ReadOnlySpan<double> LossHistory => _lossHistory;
 
     /// <param name="parallelChildren">Evaluate the four children of each step concurrently. Null = automatic
-    /// (on for grids of at least <see cref="ParallelChildrenThreshold"/> tiles). Results are identical either way.</param>
-    public ClassicOpt(ClassicSettings settings, bool useNet, int seed, bool? parallelChildren = null)
+    /// (on for grids of at least <see cref="ParallelChildrenThreshold"/> tiles). Results are identical either way.
+    /// Ignored when incremental evaluation is active.</param>
+    /// <param name="incrementalEvaluation">Evaluate mutations incrementally (see <see cref="IncrementalClassicEvaluator"/>).
+    /// Null = automatic (on whenever <see cref="IncrementalClassicEvaluator.Supports"/> the settings). Mathematically the
+    /// same evaluation, but totals can differ from the scalar evaluator in the last bit, so a seed is only guaranteed to
+    /// reproduce a run made with the same setting.</param>
+    public ClassicOpt(ClassicSettings settings, bool useNet, int seed, bool? parallelChildren = null, bool? incrementalEvaluation = null)
     {
         _settings = settings;
         _evaluator = new ClassicEvaluator(settings);
         _rng = new Rng(seed);
-        _parallelChildren = parallelChildren ?? settings.Volume >= ParallelChildrenThreshold;
+        _incremental = incrementalEvaluation ?? IncrementalClassicEvaluator.Supports(settings);
+        if (_incremental && !IncrementalClassicEvaluator.Supports(settings))
+            throw new ArgumentException("incremental evaluation cannot model active-cooler accessibility; disable active coolers or the accessibility check", nameof(incrementalEvaluation));
+        _parallelChildren = !_incremental && (parallelChildren ?? settings.Volume >= ParallelChildrenThreshold);
         if (_parallelChildren)
         {
             int n = _children.Length - 1;
@@ -99,17 +116,37 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
         _best = new ClassicSample(settings.SizeX, settings.SizeY, settings.SizeZ);
         for (int i = 0; i < _children.Length; ++i)
             _children[i] = new ClassicSample(settings.SizeX, settings.SizeY, settings.SizeZ);
+        if (_incremental)
+        {
+            _inc = new IncrementalClassicEvaluator(settings, _parent.State);
+            _childLimit = new int[_children.Length][];
+            _childValue = new ClassicEvaluation[_children.Length];
+            _childMutation = new (int, int, int, int)[_children.Length];
+            for (int i = 0; i < _children.Length; ++i)
+            {
+                _childLimit[i] = new int[NumPlaceable];
+                _childValue[i] = new ClassicEvaluation();
+            }
+        }
 
         Restart();
         if (useNet)
         {
             _net = new ClassicNet(settings, _rng);
-            _net.AppendTrajectory(_parent);
+            AppendParentTrajectory();
         }
         _parentFitness = CurrentFitness(_parent);
 
         _best.State.Fill(Air);
         _evaluator.Run(_best.State, _best.Value);
+    }
+
+    private void AppendParentTrajectory()
+    {
+        if (_inc != null)
+            _net!.AppendTrajectory(_inc.CountByTile, _inc.InvalidByTile, _parent.Value);
+        else
+            _net!.AppendTrajectory(_parent);
     }
 
     /// <summary>Mirrors <c>Opt::restart</c>: fills the parent with random tiles, respecting budgets and symmetry.</summary>
@@ -131,7 +168,20 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
             _parent.Limit[newTile] -= nSym;
             SetTileWithSym(_parent, c.X, c.Y, c.Z, newTile);
         }
-        _evaluator.Run(_parent.State, _parent.Value);
+        EvaluateParent();
+    }
+
+    private void EvaluateParent()
+    {
+        if (_inc != null)
+        {
+            _inc.Rebuild();
+            _inc.WriteTo(_parent.Value, withInvalidList: false);
+        }
+        else
+        {
+            _evaluator.Run(_parent.State, _parent.Value);
+        }
     }
 
     public bool Feasible(ClassicEvaluation x) => !_settings.EnsureHeatNeutral || x.NetHeat <= 0.0;
@@ -147,6 +197,18 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
             case ClassicGoal.Efficiency:
                 return _settings.EnsureHeatNeutral ? (x.Efficiency - 1) * x.DutyCycle : x.Efficiency - 1;
         }
+    }
+
+    /// <summary>Fitness of the incremental evaluator's current (parent + mutation) state.</summary>
+    private double CurrentFitnessIncremental(ClassicEvaluation value)
+    {
+        if (_nStage == StageInfer)
+            return _net!.Infer(_inc!.CountByTile, _inc.InvalidByTile, value);
+        if (_nStage == StageTrain)
+            return 0.0;
+        if (Feasible(value))
+            return RawFitness(value);
+        return RawFitness(value) - value.NetHeat / _settings.FuelBaseHeat * _infeasibilityPenalty;
     }
 
     private double CurrentFitness(ClassicSample x)
@@ -214,19 +276,122 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
     /// <summary>The RNG-consuming half of <c>mutateAndEvaluate</c>: pick and apply a tile change, keeping the budget counters consistent.</summary>
     private void Mutate(ClassicSample sample, int x, int y, int z)
     {
-        int nSym = GetNSym(x, y, z);
-        int oldTile = sample.State[x, y, z];
+        int newTile = DrawNewTile(sample.Limit, sample.State[x, y, z], GetNSym(x, y, z));
+        SetTileWithSym(sample, x, y, z, newTile);
+    }
+
+    /// <summary>Draws the replacement tile for a mutation and updates <paramref name="limit"/> (the budget) accordingly.</summary>
+    private int DrawNewTile(int[] limit, int oldTile, int nSym)
+    {
         if (oldTile != Air)
-            sample.Limit[oldTile] += nSym;
+            limit[oldTile] += nSym;
         _allowedTiles.Clear();
         _allowedTiles.Add(Air);
         for (int tile = 0; tile < Air; ++tile)
-            if (sample.Limit[tile] < 0 || sample.Limit[tile] >= nSym)
+            if (limit[tile] < 0 || limit[tile] >= nSym)
                 _allowedTiles.Add(tile);
         int newTile = _allowedTiles[_rng.NextInt(_allowedTiles.Count - 1)];
         if (newTile != Air)
-            sample.Limit[newTile] -= nSym;
-        SetTileWithSym(sample, x, y, z, newTile);
+            limit[newTile] -= nSym;
+        return newTile;
+    }
+
+    /// <summary>Queues a mutation (with its mirror images) on the incremental evaluator, same positions as <see cref="SetTileWithSym"/>.</summary>
+    private void QueueWithSym(int x, int y, int z, int tile)
+    {
+        var inc = _inc!;
+        int mx = _settings.SizeX - x - 1, my = _settings.SizeY - y - 1, mz = _settings.SizeZ - z - 1;
+        inc.Set(x, y, z, tile);
+        if (_settings.SymX)
+        {
+            inc.Set(mx, y, z, tile);
+            if (_settings.SymY)
+            {
+                inc.Set(x, my, z, tile);
+                inc.Set(mx, my, z, tile);
+                if (_settings.SymZ)
+                {
+                    inc.Set(x, y, mz, tile);
+                    inc.Set(mx, y, mz, tile);
+                    inc.Set(x, my, mz, tile);
+                    inc.Set(mx, my, mz, tile);
+                }
+            }
+            else if (_settings.SymZ)
+            {
+                inc.Set(x, y, mz, tile);
+                inc.Set(mx, y, mz, tile);
+            }
+        }
+        else if (_settings.SymY)
+        {
+            inc.Set(x, my, z, tile);
+            if (_settings.SymZ)
+            {
+                inc.Set(x, y, mz, tile);
+                inc.Set(x, my, mz, tile);
+            }
+        }
+        else if (_settings.SymZ)
+        {
+            inc.Set(x, y, mz, tile);
+        }
+    }
+
+    /// <summary>
+    /// The children part of <see cref="Step"/> in incremental mode: each child is the parent plus one
+    /// mutation, evaluated in place and undone; the winner (if it is at least as fit as the parent) is
+    /// re-applied and committed. Same RNG consumption and decisions as the materialized path.
+    /// </summary>
+    private void StepChildrenIncremental(ref bool bestChangedLocal)
+    {
+        var inc = _inc!;
+        int bestChild = 0;
+        double bestFitness = 0.0;
+        for (int i = 0; i < _children.Length; ++i)
+        {
+            int x = _rng.NextInt(_settings.SizeX - 1), y = _rng.NextInt(_settings.SizeY - 1), z = _rng.NextInt(_settings.SizeZ - 1);
+            Array.Copy(_parent.Limit, _childLimit[i], NumPlaceable);
+            int newTile = DrawNewTile(_childLimit[i], _parent.State[x, y, z], GetNSym(x, y, z));
+            _childMutation[i] = (x, y, z, newTile);
+            QueueWithSym(x, y, z, newTile);
+            inc.Apply();
+            var value = _childValue[i];
+            inc.WriteTo(value, withInvalidList: false);
+            double fitness = CurrentFitnessIncremental(value);
+            if (i == 0 || fitness > bestFitness)
+            {
+                bestChild = i;
+                bestFitness = fitness;
+            }
+            if (Feasible(value) && RawFitness(value) > RawFitness(_best.Value))
+            {
+                bestChangedLocal = true;
+                // The grid currently holds this child; materialize it as the new best.
+                _best.State.CopyFrom(_parent.State);
+                Array.Copy(_childLimit[i], _best.Limit, NumPlaceable);
+                inc.WriteTo(_best.Value, withInvalidList: true);
+            }
+            inc.Undo();
+        }
+        if (bestFitness >= _parentFitness)
+        {
+            if (bestFitness > _parentFitness)
+            {
+                _parentFitness = bestFitness;
+                _nConverge = 0;
+                if (_nStage == StageInfer)
+                    _inferenceFailed = false;
+            }
+            var (bx, by, bz, bt) = _childMutation[bestChild];
+            QueueWithSym(bx, by, bz, bt);
+            inc.Apply();
+            inc.Commit();
+            Array.Copy(_childLimit[bestChild], _parent.Limit, NumPlaceable);
+            inc.WriteTo(_parent.Value, withInvalidList: false);
+            if (_net != null && _nStage != StageInfer)
+                _net.AppendTrajectory(inc.CountByTile, inc.InvalidByTile, _parent.Value);
+        }
     }
 
     /// <summary>
@@ -315,7 +480,7 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
                 if (_inferenceFailed)
                     Restart();
                 _net!.NewTrajectory();
-                _net.AppendTrajectory(_parent);
+                AppendParentTrajectory();
             }
             else if (Feasible(_parent.Value) || _infeasibilityPenalty > 1e8)
             {
@@ -347,7 +512,16 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
 
         bool bestChangedLocal = _nEpisode == 0 && _nStage == 0 && _nIteration == 0 && Feasible(_parent.Value);
         if (bestChangedLocal)
+        {
+            if (_inc != null) _inc.WriteTo(_parent.Value, withInvalidList: true);
             _best.CopyFrom(_parent);
+        }
+        if (_inc != null)
+        {
+            StepChildrenIncremental(ref bestChangedLocal);
+            FinishStep(bestChangedLocal);
+            return;
+        }
         int bestChild = 0;
         double bestFitness = 0.0;
         for (int i = 0; i < _children.Length; ++i)
@@ -387,6 +561,11 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
             if (_net != null && _nStage != StageInfer)
                 _net.AppendTrajectory(_parent);
         }
+        FinishStep(bestChangedLocal);
+    }
+
+    private void FinishStep(bool bestChangedLocal)
+    {
         ++_nConverge;
         ++_nIteration;
         if (bestChangedLocal)

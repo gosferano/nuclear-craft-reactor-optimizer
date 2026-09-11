@@ -112,7 +112,7 @@ public sealed class MainWindow : Window
                 var s = new ClassicSettings();
                 _classicSettings.ApplyTo(s);
                 _classicBlocks.ApplyTo(s);
-                session = new ClassicSession(s, _classicSettings.UseNet, _classicSettings.Seed, _classicSettings.FuelName);
+                session = new ClassicSession(s, _classicSettings.UseNet, _classicSettings.Seed, _classicSettings.FuelName, _classicSettings.Incremental);
             }
         }
         catch (ArgumentException e)
