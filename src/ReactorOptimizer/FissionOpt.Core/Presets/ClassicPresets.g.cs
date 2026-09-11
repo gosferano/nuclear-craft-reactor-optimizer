@@ -187,4 +187,6 @@ public static partial class ClassicPresets
     public static readonly string[] TileTitles = { "Water", "Redstone", "Quartz", "Gold", "Glowstone", "Lapis", "Diamond", "Liquid Helium", "Enderium", "Cryotheum", "Iron", "Emerald", "Copper", "Tin", "Magnesium", "Reactor Cell", "Moderator", "Air" };
     /// <summary>Block names used by Hellrage's Reactor Planner JSON (17 entries; Air is not saved).</summary>
     public static readonly string[] TileSaveNames = { "Water", "Redstone", "Quartz", "Gold", "Glowstone", "Lapis", "Diamond", "Helium", "Enderium", "Cryotheum", "Iron", "Emerald", "Copper", "Tin", "Magnesium", "FuelCell", "Graphite" };
+    /// <summary>RGB text colors from web/main.css, indexed like TileNames.</summary>
+    public static readonly int[] TileColors = { 0x1E90FF, 0xFF0000, 0xD3D3D3, 0xFFD700, 0xDDCC00, 0x0000FF, 0xB0E0E6, 0xF08080, 0x008080, 0x00BFFF, 0xF5DEB3, 0x008000, 0xA52A2A, 0xB0C4DE, 0xFFC0CB, 0x808080, 0x000000, 0xFFFFFF };
 }

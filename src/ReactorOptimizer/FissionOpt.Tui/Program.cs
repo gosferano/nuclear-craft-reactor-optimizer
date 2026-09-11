@@ -4,14 +4,17 @@ using Terminal.Gui.App;
 
 if (args.Length > 0 && (args[0] == "headless" || args[0] == "--headless"))
 {
+    var rest = args[1..];
+    int modeIdx = Array.IndexOf(rest, "--mode");
+    bool overhaul = modeIdx >= 0 && modeIdx + 1 < rest.Length && rest[modeIdx + 1].Equals("overhaul", StringComparison.OrdinalIgnoreCase);
     try
     {
-        return ClassicHeadless.Run(args[1..]);
+        return overhaul ? OverhaulHeadless.Run(rest) : ClassicHeadless.Run(rest);
     }
     catch (ArgumentException e)
     {
         Console.Error.WriteLine("error: " + e.Message);
-        Console.Error.WriteLine(ClassicHeadless.Usage);
+        Console.Error.WriteLine(overhaul ? OverhaulHeadless.Usage : ClassicHeadless.Usage);
         return 2;
     }
 }

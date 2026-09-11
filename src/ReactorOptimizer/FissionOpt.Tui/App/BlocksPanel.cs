@@ -19,7 +19,6 @@ public sealed class BlocksPanel : View
 
     public BlocksPanel()
     {
-        Title = "_Blocks";
         Width = Dim.Fill();
         Height = Dim.Fill();
 

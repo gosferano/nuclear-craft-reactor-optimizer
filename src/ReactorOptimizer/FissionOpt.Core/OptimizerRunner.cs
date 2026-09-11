@@ -1,47 +1,48 @@
 using System.Diagnostics;
 
-namespace FissionOpt.Core.Classic;
+namespace FissionOpt.Core;
 
-/// <summary>Progress counters published by <see cref="ClassicRunner"/> for display.</summary>
+/// <summary>Progress counters published by <see cref="OptimizerRunner{TSample}"/> for display.</summary>
 public readonly record struct RunnerProgress(int Episode, int Stage, int Iteration, long Steps, double StepsPerSecond, bool Paused, bool Finished);
 
 /// <summary>
-/// Runs a <see cref="ClassicOpt"/> on a dedicated background thread and publishes the best design
-/// as a snapshot the UI thread can copy. The optimizer itself stays single-threaded, exactly like
-/// the C++; only the snapshot and the progress counters cross threads.
+/// Runs an optimizer on a dedicated background thread and publishes the best design as a snapshot
+/// the UI thread can copy. The optimizer itself stays single-threaded, exactly like the C++; only
+/// the snapshot, the loss history and the progress counters cross threads.
 /// </summary>
-public sealed class ClassicRunner : IDisposable
+public sealed class OptimizerRunner<TSample> : IDisposable where TSample : class
 {
-    private readonly ClassicOpt _opt;
+    private readonly IOptimizer<TSample> _opt;
     private readonly Thread _thread;
     private readonly object _lock = new();
-    private readonly ClassicSample _snapshot;
-    private readonly double[] _lossSnapshot = new double[ClassicOpt.NLossHistory];
+    private readonly TSample _snapshot;
+    private readonly double[] _lossSnapshot;
     private long _snapshotVersion, _takenVersion;
     private bool _lossChanged;
     private volatile bool _paused, _stopRequested, _finished;
     private RunnerProgress _progress;
     private Exception? _error;
 
-    public ClassicSettings Settings => _opt.Settings;
     public int Seed => _opt.Seed;
     public bool IsPaused => _paused;
     public bool IsFinished => _finished;
     /// <summary>Set if the optimizer thread died with an exception.</summary>
     public Exception? Error => _error;
 
-    public ClassicRunner(ClassicSettings settings, bool useNet, int seed)
+    public OptimizerRunner(IOptimizer<TSample> opt)
     {
-        _opt = new ClassicOpt(settings, useNet, seed);
-        _snapshot = new ClassicSample(settings.SizeX, settings.SizeY, settings.SizeZ);
-        _snapshot.CopyFrom(_opt.Best);
+        _opt = opt;
+        _snapshot = opt.CreateSample();
+        opt.CopySample(opt.Best, _snapshot);
         _snapshotVersion = 1;
-        // Nothing here recurses deeply, but give the optimizer room anyway; it costs nothing.
-        _thread = new Thread(Loop, 64 * 1024 * 1024) { IsBackground = true, Name = "FissionOpt classic" };
+        _lossSnapshot = new double[opt.LossHistory.Length];
+        // The evaluators use explicit stacks, but a roomy stack costs nothing and guards the net's loops too.
+        _thread = new Thread(Loop, 64 * 1024 * 1024) { IsBackground = true, Name = "FissionOpt optimizer" };
     }
 
     public void Start() => _thread.Start();
     public void Pause() => _paused = true;
+
     public void Resume()
     {
         _paused = false;
@@ -62,12 +63,12 @@ public sealed class ClassicRunner : IDisposable
     }
 
     /// <summary>Copies the latest best design into <paramref name="dest"/> if it changed since the last call.</summary>
-    public bool TryTakeSnapshot(ClassicSample dest)
+    public bool TryTakeSnapshot(TSample dest)
     {
         lock (_lock)
         {
             if (_snapshotVersion == _takenVersion) return false;
-            dest.CopyFrom(_snapshot);
+            _opt.CopySample(_snapshot, dest);
             _takenVersion = _snapshotVersion;
             return true;
         }
@@ -79,7 +80,7 @@ public sealed class ClassicRunner : IDisposable
         lock (_lock)
         {
             if (!_lossChanged) return false;
-            Array.Copy(_lossSnapshot, dest, ClassicOpt.NLossHistory);
+            Array.Copy(_lossSnapshot, dest, _lossSnapshot.Length);
             _lossChanged = false;
             return true;
         }
@@ -89,8 +90,7 @@ public sealed class ClassicRunner : IDisposable
     {
         var sw = Stopwatch.StartNew();
         long steps = 0, lastSteps = 0;
-        double lastTime = 0;
-        double rate = 0;
+        double lastTime = 0, rate = 0;
         try
         {
             while (!_stopRequested)
@@ -121,7 +121,7 @@ public sealed class ClassicRunner : IDisposable
                     {
                         if (redraw)
                         {
-                            _snapshot.CopyFrom(_opt.Best);
+                            _opt.CopySample(_opt.Best, _snapshot);
                             ++_snapshotVersion;
                         }
                         if (loss)
@@ -143,7 +143,7 @@ public sealed class ClassicRunner : IDisposable
             lock (_lock)
             {
                 // Publish whatever is best at shutdown, even if it never crossed the redraw throttle.
-                _snapshot.CopyFrom(_opt.Best);
+                _opt.CopySample(_opt.Best, _snapshot);
                 ++_snapshotVersion;
                 _finished = true;
                 _progress = _progress with { Finished = true, Paused = false };

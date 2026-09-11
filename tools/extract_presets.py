@@ -25,6 +25,39 @@ def js_string_array(src, name):
         sys.exit("array %s not found" % name)
     return re.findall(r"'((?:[^'\\]|\\.)*)'", m.group(1))
 
+CSS_NAMED = {  # the CSS color names used by main.css / overhaul.css
+    "dodgerblue": 0x1E90FF, "red": 0xFF0000, "lightgray": 0xD3D3D3, "gold": 0xFFD700, "blue": 0x0000FF,
+    "powderblue": 0xB0E0E6, "lightcoral": 0xF08080, "teal": 0x008080, "deepskyblue": 0x00BFFF, "wheat": 0xF5DEB3,
+    "green": 0x008000, "brown": 0xA52A2A, "lightsteelblue": 0xB0C4DE, "pink": 0xFFC0CB, "white": 0xFFFFFF,
+    "gray": 0x808080, "black": 0x000000, "indigo": 0x4B0082, "maroon": 0x800000, "mediumaquamarine": 0x66CDAA,
+    "lightgreen": 0x90EE90, "mediumorchid": 0xBA55D3, "darkslategray": 0x2F4F4F, "silver": 0xC0C0C0,
+    "lavender": 0xE6E6FA, "mistyrose": 0xFFE4E1,
+}
+
+def css_colors(css_path, classes):
+    """Returns {class: rgb int} for the given CSS classes."""
+    css = css_path.read_text()
+    out = {}
+    for c in classes:
+        m = re.search(r"\.%s\s*\{\s*color:\s*([^;}]+);" % re.escape(c), css)
+        if not m:
+            sys.exit("no color for .%s in %s" % (c, css_path.name))
+        v = m.group(1).strip().lower()
+        if v.startswith("#"):
+            h = v[1:]
+            if len(h) == 3:
+                h = "".join(ch * 2 for ch in h)
+            out[c] = int(h, 16)
+        elif v in CSS_NAMED:
+            out[c] = CSS_NAMED[v]
+        else:
+            sys.exit("unknown CSS color %r" % v)
+    return out
+
+def cs_colors(name, doc, colors):
+    return ["    /// <summary>%s</summary>" % doc,
+            "    public static readonly int[] %s = { %s };" % (name, ", ".join("0x%06X" % c for c in colors))]
+
 # ---------------------------------------------------------------- classic
 def classic():
     src = (WEB / "main.js").read_text()
@@ -111,10 +144,51 @@ def classic():
     out.append("    public static readonly string[] TileTitles = { %s };" % ", ".join(cs_str(s) for s in tile_titles))
     out.append("    /// <summary>Block names used by Hellrage's Reactor Planner JSON (17 entries; Air is not saved).</summary>")
     out.append("    public static readonly string[] TileSaveNames = { %s };" % ", ".join(cs_str(s) for s in save_names))
+    classes = tile_names[:15] + ["cell", "mod", "air"]
+    colors = css_colors(WEB / "main.css", classes)
+    out += cs_colors("TileColors", "RGB text colors from web/main.css, indexed like TileNames.", [colors[c] for c in classes])
     out.append("}")
     (OUT / "ClassicPresets.g.cs").write_text("\n".join(out) + "\n")
     print("classic: %d fuels, %d rate presets, %d factors" % (len(entries), len(rate_presets), len(factors)))
 
+# ---------------------------------------------------------------- overhaul
+def overhaul():
+    src = (WEB / "overhaul.js").read_text()
+    presets = re.findall(r'addFuelPreset\("(\w+)",\s*"([^"]+)",\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*(true))?\);', src)
+    if not presets:
+        sys.exit("no overhaul fuel presets parsed")
+    tile_names = js_string_array(src, "tileNames")
+    tile_titles = js_string_array(src, "tileTitles")
+    if len(tile_names) != 41 or len(tile_titles) != 41:
+        sys.exit("expected 41 overhaul tile names/titles, got %d/%d" % (len(tile_names), len(tile_titles)))
+    save_names = tile_titles[:]
+    consts = {"M0": 32, "R0": 35, "Shield": 37, "Irradiator": 38, "Conductor": 39, "Air": 40}
+    for mm in re.finditer(r"tileSaveNames\[([^\]]+)\] = (\"(?:[^\"\\]|\\.)*\"|'[^']*');", src):
+        idx = eval(mm.group(1), {}, consts)
+        val = mm.group(2)
+        save_names[idx] = eval(val) if val[0] == "'" else __import__("json").loads(val)
+    out = [HEADER.format(src="overhaul.js"), "namespace FissionOpt.Core.Presets;\n",
+           "public static partial class OverhaulPresets", "{"]
+    out.append("    /// <summary>One entry per addFuelPreset call: (fuel type OX/NI/ZA, fuel, efficiency %, heat, criticality, selfPriming).</summary>")
+    out.append("    public static readonly OverhaulFuelPreset[] Fuels =")
+    out.append("    {")
+    for typ, fuel, eff, heat, crit, sp in presets:
+        out.append("        new(%s, %s, %s, %s, %s, %s)," % (cs_str(typ), cs_str(fuel), js_num(eff), crit and str(int(float(crit))), str(int(float(heat))), "true" if sp else "false"))
+    out.append("    };\n")
+    out.append("    /// <summary>Labels indexed by tile ID 0..40 (heat sinks, moderators, reflectors, shield, irradiator, conductor, air). Cells are named per fuel at run time.</summary>")
+    out.append("    public static readonly string[] TileNames = { %s };" % ", ".join(cs_str(x) for x in tile_names))
+    out.append("    public static readonly string[] TileTitles = { %s };" % ", ".join(cs_str(x) for x in tile_titles))
+    out.append("    /// <summary>Names used in the overhaul planner JSON (index 38, the irradiator, is itself a JSON object).</summary>")
+    out.append("    public static readonly string[] TileSaveNames = { %s };" % ", ".join(cs_str(x) for x in save_names))
+    classes = tile_names[:32] + ["M0", "M1", "M2", "R0", "R1", "other", "other", "other", "air"]
+    colors = css_colors(WEB / "overhaul.css", classes)
+    out += cs_colors("TileColors", "RGB text colors from web/overhaul.css, indexed by tile ID 0..40 (cells use the 'other' color).", [colors[c] for c in classes])
+    out.append("    public const int CellColor = 0x%06X;" % colors["other"])
+    out.append("}")
+    (OUT / "OverhaulPresets.g.cs").write_text("\n".join(out) + "\n")
+    print("overhaul: %d fuel presets" % len(presets))
+
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
     classic()
+    overhaul()

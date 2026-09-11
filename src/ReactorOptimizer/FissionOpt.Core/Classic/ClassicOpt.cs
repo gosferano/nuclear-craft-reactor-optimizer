@@ -11,7 +11,7 @@ namespace FissionOpt.Core.Classic;
 /// read from that same thread; a UI should copy it (see <see cref="ClassicSample.CopyFrom"/>)
 /// when <see cref="NeedsRedrawBest"/> reports a change.
 /// </summary>
-public sealed class ClassicOpt
+public sealed class ClassicOpt : IOptimizer<ClassicSample>
 {
     public const int StageTrain = -2;
     public const int StageInfer = -1;
@@ -305,6 +305,9 @@ public sealed class ClassicOpt
             _bestChanged = true;
         }
     }
+
+    public ClassicSample CreateSample() => new(_settings.SizeX, _settings.SizeY, _settings.SizeZ);
+    public void CopySample(ClassicSample from, ClassicSample to) => to.CopyFrom(from);
 
     /// <summary>True (once) when the best design changed and at least <see cref="InteractiveMin"/> steps have run since the last redraw.</summary>
     public bool NeedsRedrawBest()

@@ -14,12 +14,22 @@ namespace FissionOpt.Tui.App;
 public sealed class ReactorView : View
 {
     private Grid3? _state;
+    private Func<int, string> _label = _ => "??";
+    private Func<int, Color, Attribute> _style = (_, bg) => new Attribute(new Color(255, 255, 255), bg);
     private const int CellW = 3; // "Wt "
 
     public ReactorView()
     {
         CanFocus = true;
         ViewportSettings = ViewportSettingsFlags.HasScrollBars;
+    }
+
+    /// <summary>Sets how tiles are labelled and colored (classic vs overhaul).</summary>
+    public void SetMode(Func<int, string> label, Func<int, Color, Attribute> style)
+    {
+        _label = label;
+        _style = style;
+        SetNeedsDraw();
     }
 
     public void SetState(Grid3? state)
@@ -74,9 +84,9 @@ public sealed class ReactorView : View
                     int col = ox + z * CellW;
                     if (col < 0 || col >= vp.Width) continue;
                     int tile = _state[x, y, z];
-                    SetAttribute(TileStyle.For(tile, normal.Background));
+                    SetAttribute(_style(tile, normal.Background));
                     Move(col, row);
-                    AddStr(ClassicExport.Label(tile));
+                    AddStr(_label(tile));
                 }
             }
         }

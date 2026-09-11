@@ -49,12 +49,14 @@ reference/oracle/build.sh
 dotnet run -c Release --project src/ReactorOptimizer/FissionOpt.Tui
 ```
 
-Three tabs (Alt+S / Alt+B / Alt+R): **Settings** (size, searchable fuel presets or manual
-power/heat, goal, symmetry, toggles, seed), **Blocks** (cooling rates and per-block limits
-with the Default / E2E / PO3 presets), **Reactor** (live design, metrics, block counts,
-training-loss sparkline). F5 runs, F6 pauses/resumes, F7 stops, F8 saves Hellrage JSON,
-Ctrl+Q quits. Axes are shown the way leu-235.com and the planner show them (X × Y × Z,
-Y vertical); internally the layer axis is x. Active coolers are drawn in reverse video.
+Pick the NuclearCraft version at the top (Alt+C classic / Alt+O overhaul), then three tabs
+(Alt+S / Alt+B / Alt+R): **Settings** (size, searchable fuel presets or manual fuels, goal,
+symmetry, toggles, seed), **Blocks** (per-block limits; classic also has cooling rates with
+the Default / E2E / PO3 presets), **Reactor** (live design, metrics, block counts,
+training-loss sparkline). F5 runs, F6 pauses/resumes, F7 stops, F8 saves planner JSON
+(Hellrage format for classic, the overhaul planner format for overhaul), Ctrl+Q quits.
+Axes are shown the way leu-235.com and the planner show them (X × Y × Z, Y vertical);
+internally the layer axis is x. Active coolers are drawn in reverse video.
 
 ## Running headless
 
@@ -63,8 +65,10 @@ dotnet run -c Release --project src/ReactorOptimizer/FissionOpt.Tui -- headless 
 ```
 
 `--help` lists every flag (fuel/config/rate presets, per-block limits, goal, symmetry,
-value-net toggle). The seed is printed on the first line; the same seed reproduces the run.
-`--out` writes Hellrage Reactor Planner JSON, the same shape leu-235.com saves.
+value-net toggle). Add `--mode overhaul` for the post-overhaul optimizer (`--mode overhaul
+--help` for its flags: `--fuel OX:LEU-235`, `--source-limits`, `--controllable`, …). The seed
+is printed on the first line; the same seed reproduces the run. `--out` writes planner JSON
+in the same shape leu-235.com saves for each mode.
 
 ## Presets
 
@@ -79,8 +83,9 @@ dotnet test src/ReactorOptimizer
 ```
 
 The differential tests generate random reactors (sizes 1³–12³, random tiles and
-settings), evaluate them with both the C# port and the C++ oracle, and require every
-output field to match bit for bit. Defaults: 100 000 cases, fixed seed. Override with
+settings) for both the classic and the overhaul evaluator, evaluate them with both the C#
+port and the C++ oracle, and require every output field — scalars, cluster stats,
+per-tile state, flux edges, the canonicalized state — to match bit for bit. Defaults: 100 000 cases, fixed seed. Override with
 `FISSIONOPT_FUZZ_CASES` and `FISSIONOPT_FUZZ_SEED`. A mismatch writes the offending
 oracle request next to the test binary so it can be replayed:
 

@@ -26,7 +26,6 @@ public sealed class SettingsPanel : View
 
     public SettingsPanel()
     {
-        Title = "_Settings";
         Width = Dim.Fill();
         Height = Dim.Fill();
 

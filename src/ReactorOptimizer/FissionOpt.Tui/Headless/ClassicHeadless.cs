@@ -10,7 +10,7 @@ namespace FissionOpt.Tui.Headless;
 public static class ClassicHeadless
 {
     public const string Usage = """
-        Usage: FissionOpt.Tui headless [options]
+        Usage: FissionOpt.Tui headless [--mode classic] [options]   (see `--mode overhaul --help` for the overhaul optimizer)
           --size WxHxD            interior size as internal X x Y x Z (default 5x5x5)
           --fuel NAME             fuel preset name, e.g. LEU-235 (default LEU-235)
           --variant Normal|Oxide  fuel variant (default Normal)
@@ -46,6 +46,7 @@ public static class ClassicHeadless
             string Next() => ++i < args.Length ? args[i] : throw new ArgumentException($"{a} needs a value");
             switch (a)
             {
+                case "--mode": Next(); break;
                 case "--size": size = Next(); break;
                 case "--fuel": fuel = Next(); break;
                 case "--variant": variant = Next(); break;

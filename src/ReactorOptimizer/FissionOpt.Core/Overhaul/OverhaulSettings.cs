@@ -3,6 +3,8 @@ namespace FissionOpt.Core.Overhaul;
 /// <summary>Mirrors <c>OverhaulFission::Fuel</c>.</summary>
 public sealed class OverhaulFuel
 {
+    /// <summary>Display / save name, e.g. "[OX]LEU-235". Not used by the evaluator.</summary>
+    public string Name = "";
     public double Efficiency;
     /// <summary>Max cells of this fuel; negative = unlimited.</summary>
     public int Limit;
@@ -12,9 +14,9 @@ public sealed class OverhaulFuel
 
     public OverhaulFuel() { }
 
-    public OverhaulFuel(double efficiency, int limit, int criticality, int heat, bool selfPriming)
+    public OverhaulFuel(double efficiency, int limit, int criticality, int heat, bool selfPriming, string name = "")
     {
-        Efficiency = efficiency; Limit = limit; Criticality = criticality; Heat = heat; SelfPriming = selfPriming;
+        Efficiency = efficiency; Limit = limit; Criticality = criticality; Heat = heat; SelfPriming = selfPriming; Name = name;
     }
 }
 

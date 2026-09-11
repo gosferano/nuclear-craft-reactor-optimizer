@@ -761,6 +761,48 @@ public sealed class OverhaulEvaluation
         ComputeStats();
     }
 
+    /// <summary>
+    /// Deep copy of another evaluation with the same settings and shape (the C++ copies the whole
+    /// <c>Evaluation</c> on <c>best = child</c>). Copies every per-tile array, the lists and the results.
+    /// </summary>
+    public void CopyFrom(OverhaulEvaluation o)
+    {
+        if (_settings == null || o._n != _n)
+            throw new InvalidOperationException("CopyFrom requires both evaluations to be initialized with the same shape");
+        _shieldOn = o._shieldOn;
+        Array.Copy(o._kind, _kind, _n); Array.Copy(o._type, _type, _n); Array.Copy(o._cluster, _cluster, _n);
+        Array.Copy(o._isActive, _isActive, _n); Array.Copy(o._isFunctional, _isFunctional, _n); Array.Copy(o._flux, _flux, _n);
+        Array.Copy(o._fuel, _fuel, _n); Array.Copy(o._neutronSource, _neutronSource, _n);
+        Array.Copy(o._isNeutronSourceBlocked, _isNeutronSourceBlocked, _n); Array.Copy(o._isExcludedFromFluxRoots, _isExcludedFromFluxRoots, _n);
+        Array.Copy(o._hasAlreadyPropagatedFlux, _hasAlreadyPropagatedFlux, _n);
+        Array.Copy(o._heatMult, _heatMult, _n); Array.Copy(o._positionalEfficiency, _positionalEfficiency, _n);
+        Array.Copy(o._fluxEfficiency, _fluxEfficiency, _n); Array.Copy(o._efficiency, _efficiency, _n);
+        Array.Copy(o._edgeHas, _edgeHas, _n * 6); Array.Copy(o._edgeEfficiency, _edgeEfficiency, _n * 6); Array.Copy(o._edgeFlux, _edgeFlux, _n * 6);
+        Array.Copy(o._edgeNModerators, _edgeNModerators, _n * 6); Array.Copy(o._edgeIsReflected, _edgeIsReflected, _n * 6);
+        CopyList(o._cells, _cells); CopyList(o._tier1s, _tier1s); CopyList(o._tier2s, _tier2s); CopyList(o._tier3s, _tier3s);
+        CopyList(o._shields, _shields); CopyList(o._irradiators, _irradiators); CopyList(o._conductors, _conductors); CopyList(o._fluxRoots, _fluxRoots);
+        _nClusters = o._nClusters;
+        while (_clusters.Count < _nClusters) _clusters.Add(new OverhaulCluster());
+        for (int k = 0; k < _nClusters; ++k)
+        {
+            var a = _clusters[k]; var b = o._clusters[k];
+            CopyList(b.Tiles, a.Tiles);
+            a.RawOutput = b.RawOutput; a.CoolingPenaltyMult = b.CoolingPenaltyMult; a.Output = b.Output;
+            a.RawEfficiency = b.RawEfficiency; a.Efficiency = b.Efficiency;
+            a.Heat = b.Heat; a.Cooling = b.Cooling; a.NetHeat = b.NetHeat; a.HasCasingConnection = b.HasCasingConnection;
+        }
+        RawEfficiency = o.RawEfficiency; Efficiency = o.Efficiency; RawOutput = o.RawOutput; Output = o.Output;
+        Density = o.Density; SparsityPenalty = o.SparsityPenalty;
+        NFunctionalBlocks = o.NFunctionalBlocks; TotalPositiveNetHeat = o.TotalPositiveNetHeat; IrradiatorFlux = o.IrradiatorFlux;
+        NActiveCells = o.NActiveCells; TotalRawFlux = o.TotalRawFlux; MaxCellFlux = o.MaxCellFlux;
+    }
+
+    private static void CopyList(List<int> from, List<int> to)
+    {
+        to.Clear();
+        to.AddRange(from);
+    }
+
     /// <summary>Mirrors <c>Evaluation::canonicalize</c>: strips non-functional tiles from a state, based on the last <see cref="Run"/>.</summary>
     public void Canonicalize(Grid3 state)
     {

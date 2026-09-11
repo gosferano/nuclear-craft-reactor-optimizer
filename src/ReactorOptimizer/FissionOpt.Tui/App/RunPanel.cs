@@ -1,4 +1,8 @@
+using FissionOpt.Core;
 using FissionOpt.Core.Classic;
+using FissionOpt.Core.Overhaul;
+using Terminal.Gui.Drawing;
+using Attribute = Terminal.Gui.Drawing.Attribute;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 
@@ -37,13 +41,32 @@ public sealed class RunPanel : View
         Add(_progress, reactorFrame, side);
     }
 
+    public void SetMode(Func<int, string> label, Func<int, Color, Attribute> style) => _reactor.SetMode(label, style);
+
     public void ShowSample(ClassicSample sample)
     {
         _reactor.SetState(sample.State);
         _metrics.Text = ClassicExport.RenderMetrics(sample.Value).TrimEnd();
-        var counts = ClassicExport.RenderBlockCounts(sample.State).Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        _blocks.Text = string.Join('\n', counts.Skip(1).Select(l => l.Trim()));
+        _blocks.Text = TrimCounts(ClassicExport.RenderBlockCounts(sample.State));
     }
+
+    public void ShowSample(OverhaulSettings settings, OverhaulSample sample)
+    {
+        _reactor.SetState(sample.State);
+        _metrics.Text = OverhaulExport.RenderMetrics(sample.Value).TrimEnd();
+        _blocks.Text = TrimCounts(OverhaulExport.RenderBlockCounts(settings, sample.State));
+    }
+
+    public void Clear()
+    {
+        _reactor.SetState(null);
+        _metrics.Text = "";
+        _blocks.Text = "";
+        _loss.Text = "";
+    }
+
+    private static string TrimCounts(string rendered) =>
+        string.Join('\n', rendered.Split('\n', StringSplitOptions.RemoveEmptyEntries).Skip(1).Select(l => l.Trim()));
 
     public void ShowProgress(string text) => _progress.Text = text;
 
