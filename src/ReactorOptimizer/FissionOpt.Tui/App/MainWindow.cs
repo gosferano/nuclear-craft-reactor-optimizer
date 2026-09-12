@@ -78,11 +78,12 @@ public sealed class MainWindow : Window
     private StreamWriter? _mouseLog;
 
     /// <summary>
-    /// Guards against a stale mouse grab. Buttons, radio items and similar views grab the mouse on
-    /// press and release it on the button-up; if that button-up never reaches the app (it can be
-    /// eaten by the terminal when the window gains or loses focus mid-click), the grab persists and
-    /// the next click is swallowed. A fresh press while we still believe a button is held means the
-    /// previous release was lost, so drop the grab before the event is routed.
+    /// Guards against a stale mouse grab. Views grab the mouse on button-down and release it while
+    /// handling the button-up/click. That release can be skipped: e.g. a click on the status bar's
+    /// "Run" disables that very shortcut, so its Clicked event is routed elsewhere and the grab stays
+    /// (observed in the field), or the terminal eats the button-up around a focus change. A grab is
+    /// only legitimate while a button is held, so any grab seen with no button down is stale: drop it
+    /// on the next motion event, and drop it before routing a fresh press.
     /// </summary>
     private void OnAppMouseEvent(object? sender, Mouse e)
     {
@@ -90,15 +91,21 @@ public sealed class MainWindow : Window
         const MouseFlags pressed = MouseFlags.LeftButtonPressed | MouseFlags.RightButtonPressed | MouseFlags.MiddleButtonPressed | MouseFlags.Button4Pressed;
         const MouseFlags released = MouseFlags.LeftButtonReleased | MouseFlags.RightButtonReleased | MouseFlags.MiddleButtonReleased | MouseFlags.Button4Released;
         bool isMotion = (e.Flags & MouseFlags.PositionReport) != 0;
-        if ((e.Flags & pressed) != 0 && !isMotion)
+        bool anyPressed = (e.Flags & pressed) != 0;
+        if (anyPressed && !isMotion)
         {
-            if (_buttonHeld && _app.Mouse.IsGrabbed())
+            // A grab can only start on a button-down, so one that exists when a new button-down arrives is stale.
+            if (_app.Mouse.IsGrabbed())
                 _app.Mouse.UngrabMouse();
             _buttonHeld = true;
         }
         else if ((e.Flags & released) != 0)
         {
             _buttonHeld = false;
+        }
+        else if (isMotion && !anyPressed && !_buttonHeld && _app.Mouse.IsGrabbed())
+        {
+            _app.Mouse.UngrabMouse();
         }
     }
 
@@ -162,8 +169,15 @@ public sealed class MainWindow : Window
         _tabs.Value = _run;
         _run.ShowProgress($"Starting (seed {_session.Seed})…");
         _timer ??= _app.AddTimeout(TimeSpan.FromMilliseconds(100), Poll);
-        UpdateControls();
+        Defer(UpdateControls);
     }
+
+    /// <summary>
+    /// Runs <paramref name="action"/> on the next main-loop iteration. Used after Run/Pause/Stop so the status-bar
+    /// shortcut that was clicked finishes its own click handling (which releases its mouse grab) before we disable it;
+    /// <c>IApplication.Invoke</c> would run immediately on the UI thread.
+    /// </summary>
+    private void Defer(Action action) => _app.AddTimeout(TimeSpan.FromMilliseconds(1), () => { action(); return false; });
 
     private bool Poll()
     {
@@ -182,7 +196,7 @@ public sealed class MainWindow : Window
         if (_session.TryTakeLossHistory(_loss))
             _run.ShowLoss(_loss, _run.LossWidth);
         var p = _session.Progress;
-        string state = p.Finished ? "Stopped" : p.Paused ? "Paused" : $"{p.StepsPerSecond:0} steps/s";
+        string state = p.Finished ? "Stopped" : p.Paused ? "Paused" : p.Preparing ? "starting" : $"{p.StepsPerSecond:0} steps/s";
 #if DEBUG
         state += "  [DEBUG BUILD: ~3.5× slower, run with -c Release]";
 #endif
@@ -196,7 +210,7 @@ public sealed class MainWindow : Window
     {
         if (_session == null || _session.IsFinished) return;
         if (_session.IsPaused) _session.Resume(); else _session.Pause();
-        UpdateControls();
+        Defer(UpdateControls);
     }
 
     private void Stop()
@@ -204,7 +218,7 @@ public sealed class MainWindow : Window
         if (_session == null) return;
         _session.Stop();
         Poll(); // publish the final best
-        UpdateControls();
+        Defer(UpdateControls);
     }
 
     private void Save()

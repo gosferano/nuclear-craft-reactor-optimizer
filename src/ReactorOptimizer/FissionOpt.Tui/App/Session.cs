@@ -33,20 +33,28 @@ public sealed class ClassicSession : ISession
     private readonly ClassicSample _shown;
     public bool HasDesign { get; private set; }
 
-    private readonly string _modeText;
-
     public ClassicSession(ClassicSettings settings, bool useNet, int seed, string fuelName, bool? incremental, bool simdNet, bool? tiledRestarts)
     {
         _settings = settings;
         _fuelName = fuelName;
-        // The unit optimization takes a couple of seconds; it runs here, before the window shows "Starting".
-        var pool = ClassicSeeding.PoolFor(settings, tiledRestarts, seed);
-        var opt = new ClassicOpt(settings, useNet, seed, incrementalEvaluation: incremental, simdNet: simdNet, unitPool: pool);
-        _modeText = (opt.IncrementalEvaluation ? " [incremental]" : opt.ParallelChildren ? " [4 threads]" : "")
-            + (opt.UsesNet ? opt.SimdNet ? " [simd net]" : " [scalar net]" : "")
-            + (opt.TiledRestarts ? $" [tiled restarts: {opt.UnitPool!.Units.Count} units]" : "");
-        _runner = new OptimizerRunner<ClassicSample>(opt);
+        // The unit pool takes a couple of seconds to build; the runner constructs everything on its own thread.
+        _runner = new OptimizerRunner<ClassicSample>(() =>
+        {
+            var pool = ClassicSeeding.PoolFor(settings, tiledRestarts, seed);
+            return new ClassicOpt(settings, useNet, seed, incrementalEvaluation: incremental, simdNet: simdNet, unitPool: pool);
+        }, seed);
         _shown = new ClassicSample(settings.SizeX, settings.SizeY, settings.SizeZ);
+    }
+
+    private string ModeText
+    {
+        get
+        {
+            if (_runner.Optimizer is not ClassicOpt opt) return "";
+            return (opt.IncrementalEvaluation ? " [incremental]" : opt.ParallelChildren ? " [4 threads]" : "")
+                + (opt.UsesNet ? opt.SimdNet ? " [simd net]" : " [scalar net]" : "")
+                + (opt.TiledRestarts ? $" [tiled restarts: {opt.UnitPool!.Units.Count} units]" : "");
+        }
     }
 
     public int Seed => _runner.Seed;
@@ -60,12 +68,12 @@ public sealed class ClassicSession : ISession
     public RunnerProgress Progress => _runner.Progress;
     public bool TryTakeLossHistory(double[] dest) => _runner.TryTakeLossHistory(dest);
 
-    public string StageText(RunnerProgress p) => (p.Stage switch
+    public string StageText(RunnerProgress p) => p.Preparing ? "Preparing (optimizing unit designs)…" : (p.Stage switch
     {
         ClassicOpt.StageTrain => $"Episode {p.Episode}, training iteration {p.Iteration}",
         ClassicOpt.StageInfer => $"Episode {p.Episode}, inference iteration {p.Iteration}",
         _ => $"Episode {p.Episode}, stage {p.Stage}, iteration {p.Iteration}",
-    }) + _modeText;
+    }) + ModeText;
 
     public void ConfigurePanel(RunPanel panel) => panel.SetMode(ClassicExport.Label, TileStyle.Classic);
 

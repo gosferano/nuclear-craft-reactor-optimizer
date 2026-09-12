@@ -3,7 +3,7 @@ using System.Diagnostics;
 namespace FissionOpt.Core;
 
 /// <summary>Progress counters published by <see cref="OptimizerRunner{TSample}"/> for display.</summary>
-public readonly record struct RunnerProgress(int Episode, int Stage, int Iteration, long Steps, double StepsPerSecond, bool Paused, bool Finished);
+public readonly record struct RunnerProgress(int Episode, int Stage, int Iteration, long Steps, double StepsPerSecond, bool Paused, bool Finished, bool Preparing = false);
 
 /// <summary>
 /// Runs an optimizer on a dedicated background thread and publishes the best design as a snapshot
@@ -12,30 +12,38 @@ public readonly record struct RunnerProgress(int Episode, int Stage, int Iterati
 /// </summary>
 public sealed class OptimizerRunner<TSample> : IDisposable where TSample : class
 {
-    private readonly IOptimizer<TSample> _opt;
+    private readonly Func<IOptimizer<TSample>> _factory;
+    private readonly int _seed;
+    private IOptimizer<TSample>? _opt;
     private readonly Thread _thread;
     private readonly object _lock = new();
-    private readonly TSample _snapshot;
-    private readonly double[] _lossSnapshot;
+    private TSample? _snapshot;
+    private double[] _lossSnapshot = Array.Empty<double>();
     private long _snapshotVersion, _takenVersion;
     private bool _lossChanged;
     private volatile bool _paused, _stopRequested, _finished;
     private RunnerProgress _progress;
     private Exception? _error;
 
-    public int Seed => _opt.Seed;
+    public int Seed => _seed;
     public bool IsPaused => _paused;
     public bool IsFinished => _finished;
+    /// <summary>The optimizer, once the thread has constructed it (null while preparing).</summary>
+    public IOptimizer<TSample>? Optimizer => Volatile.Read(ref _opt);
     /// <summary>Set if the optimizer thread died with an exception.</summary>
     public Exception? Error => _error;
 
-    public OptimizerRunner(IOptimizer<TSample> opt)
+    public OptimizerRunner(IOptimizer<TSample> opt) : this(() => opt, opt.Seed) { }
+
+    /// <summary>
+    /// Constructs the optimizer on the background thread via <paramref name="factory"/>, so expensive setup
+    /// (e.g. building a unit pool) never blocks the caller; <see cref="RunnerProgress.Preparing"/> is true until then.
+    /// </summary>
+    public OptimizerRunner(Func<IOptimizer<TSample>> factory, int seed)
     {
-        _opt = opt;
-        _snapshot = opt.CreateSample();
-        opt.CopySample(opt.Best, _snapshot);
-        _snapshotVersion = 1;
-        _lossSnapshot = new double[opt.LossHistory.Length];
+        _factory = factory;
+        _seed = seed;
+        _progress = new RunnerProgress(0, 0, 0, 0, 0, false, false, Preparing: true);
         // The evaluators use explicit stacks, but a roomy stack costs nothing and guards the net's loops too.
         _thread = new Thread(Loop, 64 * 1024 * 1024) { IsBackground = true, Name = "FissionOpt optimizer" };
     }
@@ -67,8 +75,8 @@ public sealed class OptimizerRunner<TSample> : IDisposable where TSample : class
     {
         lock (_lock)
         {
-            if (_snapshotVersion == _takenVersion) return false;
-            _opt.CopySample(_snapshot, dest);
+            if (_snapshot == null || _snapshotVersion == _takenVersion) return false;
+            _opt!.CopySample(_snapshot, dest);
             _takenVersion = _snapshotVersion;
             return true;
         }
@@ -93,6 +101,18 @@ public sealed class OptimizerRunner<TSample> : IDisposable where TSample : class
         double lastTime = 0, rate = 0;
         try
         {
+            var opt = _factory();
+            var snapshot = opt.CreateSample();
+            opt.CopySample(opt.Best, snapshot);
+            lock (_lock)
+            {
+                _lossSnapshot = new double[opt.LossHistory.Length];
+                _snapshot = snapshot;
+                _snapshotVersion = 1;
+                Volatile.Write(ref _opt, opt);
+                _progress = new RunnerProgress(opt.NEpisode, opt.NStage, opt.NIteration, 0, 0, false, false);
+            }
+            sw.Restart();
             while (!_stopRequested)
             {
                 if (_paused)
@@ -105,10 +125,10 @@ public sealed class OptimizerRunner<TSample> : IDisposable where TSample : class
                     sw.Restart(); lastTime = 0; lastSteps = steps;
                     continue;
                 }
-                _opt.Step();
+                opt.Step();
                 ++steps;
-                bool redraw = _opt.NeedsRedrawBest();
-                bool loss = _opt.NeedsReplotLoss();
+                bool redraw = opt.NeedsRedrawBest();
+                bool loss = opt.NeedsReplotLoss();
                 if (redraw || loss || (steps & 255) == 0)
                 {
                     double t = sw.Elapsed.TotalSeconds;
@@ -121,15 +141,15 @@ public sealed class OptimizerRunner<TSample> : IDisposable where TSample : class
                     {
                         if (redraw)
                         {
-                            _opt.CopySample(_opt.Best, _snapshot);
+                            opt.CopySample(opt.Best, snapshot);
                             ++_snapshotVersion;
                         }
                         if (loss)
                         {
-                            _opt.LossHistory.CopyTo(_lossSnapshot);
+                            opt.LossHistory.CopyTo(_lossSnapshot);
                             _lossChanged = true;
                         }
-                        _progress = new RunnerProgress(_opt.NEpisode, _opt.NStage, _opt.NIteration, steps, rate, false, false);
+                        _progress = new RunnerProgress(opt.NEpisode, opt.NStage, opt.NIteration, steps, rate, false, false);
                     }
                 }
             }
@@ -143,10 +163,13 @@ public sealed class OptimizerRunner<TSample> : IDisposable where TSample : class
             lock (_lock)
             {
                 // Publish whatever is best at shutdown, even if it never crossed the redraw throttle.
-                _opt.CopySample(_opt.Best, _snapshot);
-                ++_snapshotVersion;
+                if (_opt != null && _snapshot != null)
+                {
+                    _opt.CopySample(_opt.Best, _snapshot);
+                    ++_snapshotVersion;
+                }
                 _finished = true;
-                _progress = _progress with { Finished = true, Paused = false };
+                _progress = _progress with { Finished = true, Paused = false, Preparing = false };
             }
         }
     }
