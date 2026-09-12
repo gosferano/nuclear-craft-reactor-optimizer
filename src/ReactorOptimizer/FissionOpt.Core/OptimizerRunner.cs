@@ -37,7 +37,7 @@ public sealed class OptimizerRunner<TSample> : IDisposable where TSample : class
 
     /// <summary>
     /// Constructs the optimizer on the background thread via <paramref name="factory"/>, so expensive setup
-    /// (e.g. building a unit pool) never blocks the caller; <see cref="RunnerProgress.Preparing"/> is true until then.
+    /// never blocks the caller; <see cref="RunnerProgress.Preparing"/> is true until then.
     /// </summary>
     public OptimizerRunner(Func<IOptimizer<TSample>> factory, int seed)
     {
