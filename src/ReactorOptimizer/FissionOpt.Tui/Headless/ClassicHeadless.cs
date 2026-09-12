@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using FissionOpt.Core;
 using FissionOpt.Core.Classic;
 using FissionOpt.Core.Presets;
 using static FissionOpt.Core.Classic.ClassicTiles;
@@ -23,6 +24,10 @@ public static class ClassicHeadless
           --sym x,y,z | --sym none          mirror symmetries (default x,y,z)
           --no-net                disable the value network
           --simd-net on|off       Vector256 kernels in the value net (default on; off = original scalar loops)
+          --restart auto|random|tiled  restart episodes from a random grid (upstream) or from a tiled unit design
+                                  optimized first on a small box (auto: tiled for grids of >= 2000 tiles)
+          --unit-steps N          steps spent optimizing the unit design for --restart tiled (default 300000)
+          --tile-noise F          fraction of tiles randomized on each tiled restart (default 0.02)
           --incremental auto|on|off  evaluate mutations incrementally (auto: on unless active coolers + accessibility)
           --parallel auto|on|off  evaluate the 4 children of each step on separate threads (auto: on for >= 300 tiles;
                                   only used when incremental evaluation is off)
@@ -43,7 +48,8 @@ public static class ClassicHeadless
         string goal = "power", sym = "x,y,z";
         bool useNet = true, heatNeutral = true, accessible = true, quiet = false;
         bool? parallel = null, incremental = null;
-        bool simdNet = true;
+        bool simdNet = true; bool? tiled = null;
+        int unitSteps = 300_000; double tileNoise = 0.02;
         int seed = 0; double seconds = 30; long? steps = null; string? outFile = null;
 
         for (int i = 0; i < args.Length; ++i)
@@ -70,6 +76,11 @@ public static class ClassicHeadless
                 case "--goal": goal = Next(); break;
                 case "--sym": sym = Next(); break;
                 case "--no-net": useNet = false; break;
+                case "--restart":
+                    tiled = Next().ToLowerInvariant() switch { "auto" => null, "random" => false, "tiled" => true, var v => throw new ArgumentException("--restart expects auto|random|tiled, got " + v) };
+                    break;
+                case "--unit-steps": unitSteps = int.Parse(Next(), CultureInfo.InvariantCulture); break;
+                case "--tile-noise": tileNoise = ParseDouble(Next()); break;
                 case "--simd-net":
                     simdNet = Next().ToLowerInvariant() switch { "on" => true, "off" => false, var v => throw new ArgumentException("--simd-net expects on|off, got " + v) };
                     break;
@@ -146,9 +157,18 @@ public static class ClassicHeadless
 
         Console.WriteLine($"seed={seed} size={settings.SizeX}x{settings.SizeY}x{settings.SizeZ} fuel={fuelName} power={settings.FuelBasePower} heat={settings.FuelBaseHeat} rates={ratePreset.Config} goal={settings.Goal} sym={sym} net={useNet} heatNeutral={heatNeutral} accessible={accessible}");
 
-        using var opt = new ClassicOpt(settings, useNet, seed, parallel, incremental, simdNet);
-        Console.WriteLine($"incremental evaluation: {opt.IncrementalEvaluation}, parallel children: {opt.ParallelChildren}, simd net: {opt.SimdNet}");
         var sw = Stopwatch.StartNew();
+        Grid3? pattern = null;
+        if (ClassicSeeding.UseTiled(settings, tiled))
+        {
+            var unit = ClassicSeeding.UnitSize(settings);
+            pattern = ClassicSeeding.OptimizeUnit(settings, unit, unitSteps, seed);
+            var unitEval = new ClassicEvaluation();
+            new ClassicEvaluator(ClassicSeeding.UnitSettings(settings, unit)).Run(pattern, unitEval);
+            Console.WriteLine($"unit design {unit.x}x{unit.y}x{unit.z} optimized in {sw.Elapsed.TotalSeconds:F1}s ({unitSteps} steps): avgPower={unitEval.AvgPower:F1} cells={unitEval.Breed} netHeat={unitEval.NetHeat:F1}");
+        }
+        using var opt = new ClassicOpt(settings, useNet, seed, parallel, incremental, simdNet, pattern, tileNoise);
+        Console.WriteLine($"incremental evaluation: {opt.IncrementalEvaluation}, parallel children: {opt.ParallelChildren}, simd net: {opt.SimdNet}, restarts: {(opt.TiledRestarts ? "tiled" : "random")}");
         long n = 0;
         while (steps.HasValue ? n < steps.Value : sw.Elapsed.TotalSeconds < seconds)
         {

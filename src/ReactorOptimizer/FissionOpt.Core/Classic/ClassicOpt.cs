@@ -39,6 +39,9 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
     private readonly int[][] _childLimit = Array.Empty<int[]>();
     private readonly ClassicEvaluation[] _childValue = Array.Empty<ClassicEvaluation>();
     private readonly (int x, int y, int z, int tile)[] _childMutation = Array.Empty<(int, int, int, int)>();
+    // Tiling-seeded restarts (see ClassicSeeding): null = upstream's random restarts.
+    private readonly Grid3? _tilePattern;
+    private readonly double _tileNoise;
     private readonly List<Coord> _allowedCoords = new();
     private readonly List<int> _allowedTiles = new();
     private int _nEpisode, _nStage, _nIteration;
@@ -82,9 +85,14 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
     /// reproduce a run made with the same setting.</param>
     /// <param name="simdNet">Use the Vector256 kernels in the value net (faster; results reproducible on every CPU but
     /// differ in the last bits from the scalar loops, so a seed reproduces a run only with the same setting).</param>
-    public ClassicOpt(ClassicSettings settings, bool useNet, int seed, bool? parallelChildren = null, bool? incrementalEvaluation = null, bool simdNet = true)
+    /// <param name="tilePattern">If set, every episode restarts from this design tiled over the grid (random phase
+    /// shift, <paramref name="tileNoise"/> fraction of tiles randomized) instead of a random grid. Not upstream behaviour.</param>
+    public ClassicOpt(ClassicSettings settings, bool useNet, int seed, bool? parallelChildren = null, bool? incrementalEvaluation = null, bool simdNet = true,
+        Grid3? tilePattern = null, double tileNoise = 0.02)
     {
         _settings = settings;
+        _tilePattern = tilePattern;
+        _tileNoise = tileNoise;
         _evaluator = new ClassicEvaluator(settings);
         _rng = new Rng(seed);
         _incremental = incrementalEvaluation ?? IncrementalClassicEvaluator.Supports(settings);
@@ -153,9 +161,17 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
             _net!.AppendTrajectory(_parent);
     }
 
+    /// <summary>True when episodes restart from a tiled seed design rather than a random grid.</summary>
+    public bool TiledRestarts => _tilePattern != null;
+
     /// <summary>Mirrors <c>Opt::restart</c>: fills the parent with random tiles, respecting budgets and symmetry.</summary>
     private void Restart()
     {
+        if (_tilePattern != null)
+        {
+            TiledRestart();
+            return;
+        }
         _rng.Shuffle(_allowedCoords);
         Array.Copy(_settings.Limit, _parent.Limit, NumPlaceable);
         _parent.State.Fill(Air);
@@ -171,6 +187,35 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
             int newTile = _allowedTiles[_rng.NextInt(_allowedTiles.Count - 1)];
             _parent.Limit[newTile] -= nSym;
             SetTileWithSym(_parent, c.X, c.Y, c.Z, newTile);
+        }
+        EvaluateParent();
+    }
+
+    /// <summary>Restart from the tile pattern: random phase shift, a little noise, budgets and symmetry respected.</summary>
+    private void TiledRestart()
+    {
+        var unit = _tilePattern!;
+        _rng.Shuffle(_allowedCoords);
+        Array.Copy(_settings.Limit, _parent.Limit, NumPlaceable);
+        _parent.State.Fill(Air);
+        int ox = _rng.NextInt(unit.SizeX - 1), oy = _rng.NextInt(unit.SizeY - 1), oz = _rng.NextInt(unit.SizeZ - 1);
+        foreach (var c in _allowedCoords)
+        {
+            int nSym = GetNSym(c.X, c.Y, c.Z);
+            int tile = unit[(c.X + ox) % unit.SizeX, (c.Y + oy) % unit.SizeY, (c.Z + oz) % unit.SizeZ];
+            if (_tileNoise > 0 && _rng.NextDouble() < _tileNoise)
+            {
+                _allowedTiles.Clear();
+                for (int t = 0; t < Air; ++t)
+                    if (_parent.Limit[t] < 0 || _parent.Limit[t] >= nSym)
+                        _allowedTiles.Add(t);
+                tile = _allowedTiles.Count == 0 ? Air : _allowedTiles[_rng.NextInt(_allowedTiles.Count - 1)];
+            }
+            if (tile != Air && !(_parent.Limit[tile] < 0 || _parent.Limit[tile] >= nSym))
+                tile = Air; // budget exhausted for this block type
+            if (tile != Air)
+                _parent.Limit[tile] -= nSym;
+            SetTileWithSym(_parent, c.X, c.Y, c.Z, tile);
         }
         EvaluateParent();
     }

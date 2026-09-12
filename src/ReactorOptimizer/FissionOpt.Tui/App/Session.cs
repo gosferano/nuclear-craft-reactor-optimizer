@@ -35,13 +35,16 @@ public sealed class ClassicSession : ISession
 
     private readonly string _modeText;
 
-    public ClassicSession(ClassicSettings settings, bool useNet, int seed, string fuelName, bool? incremental, bool simdNet)
+    public ClassicSession(ClassicSettings settings, bool useNet, int seed, string fuelName, bool? incremental, bool simdNet, bool? tiledRestarts)
     {
         _settings = settings;
         _fuelName = fuelName;
-        var opt = new ClassicOpt(settings, useNet, seed, incrementalEvaluation: incremental, simdNet: simdNet);
+        // The unit optimization takes a couple of seconds; it runs here, before the window shows "Starting".
+        var pattern = ClassicSeeding.PatternFor(settings, tiledRestarts, seed);
+        var opt = new ClassicOpt(settings, useNet, seed, incrementalEvaluation: incremental, simdNet: simdNet, tilePattern: pattern);
         _modeText = (opt.IncrementalEvaluation ? " [incremental]" : opt.ParallelChildren ? " [4 threads]" : "")
-            + (opt.UsesNet ? opt.SimdNet ? " [simd net]" : " [scalar net]" : "");
+            + (opt.UsesNet ? opt.SimdNet ? " [simd net]" : " [scalar net]" : "")
+            + (opt.TiledRestarts ? " [tiled restarts]" : "");
         _runner = new OptimizerRunner<ClassicSample>(opt);
         _shown = new ClassicSample(settings.SizeX, settings.SizeY, settings.SizeZ);
     }

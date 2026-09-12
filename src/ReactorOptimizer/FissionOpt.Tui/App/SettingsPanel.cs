@@ -19,7 +19,7 @@ public sealed class SettingsPanel : View
     private readonly ListView _fuelList;
     private readonly ObservableCollection<string> _fuelItems = new();
     private readonly List<ClassicFuelPreset> _filtered = new();
-    private readonly OptionSelector _goal;
+    private readonly OptionSelector _goal, _restart;
     private readonly CheckBox _symX, _symY, _symZ, _accessible, _heatNeutral, _useNet, _incremental, _simdNet;
     private readonly Label _fuelLabel;
     private string _fuelName = "";
@@ -64,7 +64,7 @@ public sealed class SettingsPanel : View
         }
         Add(factorFrame);
 
-        var optFrame = new FrameView { Title = "Options", X = Pos.Right(fuelFrame) + 1, Y = 3, Width = Dim.Fill(1), Height = 22 };
+        var optFrame = new FrameView { Title = "Options", X = Pos.Right(fuelFrame) + 1, Y = 3, Width = Dim.Fill(1), Height = 24 };
         var goalLabel = new Label { X = 0, Y = 0, Text = "Optimize for:" };
         _goal = new OptionSelector
         {
@@ -81,9 +81,15 @@ public sealed class SettingsPanel : View
         _useNet = Check(0, 13, "Use reinforcement learning (value network)", true);
         _incremental = Check(0, 14, "Incremental evaluation (falls back to full evaluation if active coolers must be accessible)", true);
         _simdNet = Check(0, 15, "SIMD value net (faster; a seed reproduces a run only with the same setting)", true);
-        var seedLabel = new Label { X = 0, Y = 17, Text = "Seed:" };
-        _seed = Field(Pos.Right(seedLabel) + 1, 17, 12, "0");
-        optFrame.Add(goalLabel, _goal, _accessible, _heatNeutral, symLabel, _symX, _symY, _symZ, _useNet, _incremental, _simdNet, seedLabel, _seed);
+        var restartLabel = new Label { X = 0, Y = 17, Text = "Episode restarts:" };
+        _restart = new OptionSelector
+        {
+            X = Pos.Right(restartLabel) + 1, Y = 17, Orientation = Orientation.Horizontal,
+            Labels = new[] { "Auto", "Random (upstream)", "Tiled unit design" }, Value = 0,
+        };
+        var seedLabel = new Label { X = 0, Y = 19, Text = "Seed:" };
+        _seed = Field(Pos.Right(seedLabel) + 1, 19, 12, "0");
+        optFrame.Add(goalLabel, _goal, _accessible, _heatNeutral, symLabel, _symX, _symY, _symZ, _useNet, _incremental, _simdNet, restartLabel, _restart, seedLabel, _seed);
         Add(optFrame);
 
         _search.TextChanged += (_, _) => RefreshFuelList();
@@ -146,6 +152,8 @@ public sealed class SettingsPanel : View
     /// <summary>Null = automatic; false = force the scalar evaluator.</summary>
     public bool? Incremental => _incremental.Value == CheckState.Checked ? null : false;
     public bool SimdNet => _simdNet.Value == CheckState.Checked;
+    /// <summary>Null = automatic by grid size; false = random restarts; true = tiled.</summary>
+    public bool? TiledRestarts => _restart.Value switch { 1 => false, 2 => true, _ => null };
 
     public int Seed => int.TryParse(_seed.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var s)
         ? s : throw new ArgumentException("Seed must be an integer");
@@ -181,7 +189,7 @@ public sealed class SettingsPanel : View
 
     public void SetEnabledAll(bool enabled)
     {
-        foreach (var v in new View[] { _sizeX, _sizeY, _sizeZ, _power, _heat, _search, _seed, _fuelList, _goal, _symX, _symY, _symZ, _accessible, _heatNeutral, _useNet, _incremental, _simdNet })
+        foreach (var v in new View[] { _sizeX, _sizeY, _sizeZ, _power, _heat, _search, _seed, _fuelList, _goal, _symX, _symY, _symZ, _accessible, _heatNeutral, _useNet, _incremental, _simdNet, _restart })
             v.Enabled = enabled;
     }
 }

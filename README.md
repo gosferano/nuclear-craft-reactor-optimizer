@@ -94,6 +94,14 @@ Measured on a 24³, no symmetry, breeder goal (Release, this machine): scalar ~3
 parallel children ~1 450, incremental ~150 000 in rollout; a training iteration costs ~0.5 ms
 and an inference ~2.4 µs. Always build Release — Debug is ~3.5× slower.
 
+**Tiled restarts** (classic; not in upstream): every rule is local, so for large grids each
+episode restarts from a design optimized on a small unit box (largest divisor of each axis in
+4–8) tiled across the grid with a random phase shift and 2% noise, instead of from a random
+grid. `--restart auto|random|tiled` / "Episode restarts" in the TUI; auto = tiled for grids of
+2 000+ tiles. Measured on a 24³ breeding run, 5 minutes, 8 seeds: 5 528 vs 5 426 cells with the
+net (5 452 vs 5 328 without), and the tiled runs reach in 10 s what random restarts reach in
+minutes. No measurable difference at 10³, hence the threshold.
+
 One consequence of the counter-based totals: the port's classic double totals can differ
 from the C++ in the last bit (summation order), so the classic oracle test compares those
 to 1e-9 relative and everything else exactly.

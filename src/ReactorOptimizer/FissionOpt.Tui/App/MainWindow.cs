@@ -139,7 +139,7 @@ public sealed class MainWindow : Window
                 var s = new ClassicSettings();
                 _classicSettings.ApplyTo(s);
                 _classicBlocks.ApplyTo(s);
-                session = new ClassicSession(s, _classicSettings.UseNet, _classicSettings.Seed, _classicSettings.FuelName, _classicSettings.Incremental, _classicSettings.SimdNet);
+                session = new ClassicSession(s, _classicSettings.UseNet, _classicSettings.Seed, _classicSettings.FuelName, _classicSettings.Incremental, _classicSettings.SimdNet, _classicSettings.TiledRestarts);
             }
         }
         catch (ArgumentException e)
