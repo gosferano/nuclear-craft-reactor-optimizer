@@ -64,8 +64,35 @@ public sealed class MainWindow : Window
         Add(modeLabel, _mode, _tabs, bar);
 
         _mode.ValueChanged += (_, _) => ApplyMode();
+        _app.Mouse.MouseEvent += OnAppMouseEvent;
         ApplyMode();
         UpdateControls();
+    }
+
+    private bool _buttonHeld;
+
+    /// <summary>
+    /// Guards against a stale mouse grab. Buttons, radio items and similar views grab the mouse on
+    /// press and release it on the button-up; if that button-up never reaches the app (it can be
+    /// eaten by the terminal when the window gains or loses focus mid-click), the grab persists and
+    /// the next click is swallowed. A fresh press while we still believe a button is held means the
+    /// previous release was lost, so drop the grab before the event is routed.
+    /// </summary>
+    private void OnAppMouseEvent(object? sender, Mouse e)
+    {
+        const MouseFlags pressed = MouseFlags.LeftButtonPressed | MouseFlags.RightButtonPressed | MouseFlags.MiddleButtonPressed | MouseFlags.Button4Pressed;
+        const MouseFlags released = MouseFlags.LeftButtonReleased | MouseFlags.RightButtonReleased | MouseFlags.MiddleButtonReleased | MouseFlags.Button4Released;
+        bool isMotion = (e.Flags & MouseFlags.PositionReport) != 0;
+        if ((e.Flags & pressed) != 0 && !isMotion)
+        {
+            if (_buttonHeld && _app.Mouse.IsGrabbed())
+                _app.Mouse.UngrabMouse();
+            _buttonHeld = true;
+        }
+        else if ((e.Flags & released) != 0)
+        {
+            _buttonHeld = false;
+        }
     }
 
     private void ApplyMode()
@@ -207,6 +234,7 @@ public sealed class MainWindow : Window
     {
         if (disposing)
         {
+            _app.Mouse.MouseEvent -= OnAppMouseEvent;
             if (_timer != null) _app.RemoveTimeout(_timer);
             DisposeSession();
         }
