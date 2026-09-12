@@ -85,7 +85,7 @@ public sealed class SettingsPanel : View
         _restart = new OptionSelector
         {
             X = Pos.Right(restartLabel) + 1, Y = 17, Orientation = Orientation.Horizontal,
-            Labels = new[] { "Auto", "Random (upstream)", "Tiled unit design" }, Value = 0,
+            Labels = new[] { "Random (upstream)", "Tiled unit design (fast start, may plateau)" }, Value = 0,
         };
         var seedLabel = new Label { X = 0, Y = 19, Text = "Seed:" };
         _seed = Field(Pos.Right(seedLabel) + 1, 19, 12, "0");
@@ -153,7 +153,7 @@ public sealed class SettingsPanel : View
     public bool? Incremental => _incremental.Value == CheckState.Checked ? null : false;
     public bool SimdNet => _simdNet.Value == CheckState.Checked;
     /// <summary>Null = automatic by grid size; false = random restarts; true = tiled.</summary>
-    public bool? TiledRestarts => _restart.Value switch { 1 => false, 2 => true, _ => null };
+    public bool? TiledRestarts => _restart.Value == 1;
 
     public int Seed => int.TryParse(_seed.Text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var s)
         ? s : throw new ArgumentException("Seed must be an integer");

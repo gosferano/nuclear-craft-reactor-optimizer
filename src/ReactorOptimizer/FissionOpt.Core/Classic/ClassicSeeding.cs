@@ -9,8 +9,12 @@ namespace FissionOpt.Core.Classic;
 /// </summary>
 public static class ClassicSeeding
 {
-    /// <summary>Grids at least this large default to tiled restarts; below it random restarts explore better (measured: no gain at 10³, +2–3% at 24³).</summary>
-    public const int AutoThreshold = 2000;
+    /// <summary>
+    /// Tiled restarts are opt-in. They win short runs by a wide margin (24³ breeding: ~7 000 cells in seconds vs
+    /// hours for random restarts) but were observed to plateau there in hours-long runs, where upstream's random
+    /// restarts kept creeping past them (7 200). Until that is resolved, "auto" means upstream behaviour.
+    /// </summary>
+    public const bool AutoTiled = false;
     /// <summary>Default number of steps spent optimizing each unit design (units run in parallel; 4³ needs ~2M to reach the checkerboard density).</summary>
     public const int DefaultUnitSteps = 1_500_000;
 
@@ -18,8 +22,7 @@ public static class ClassicSeeding
     public static bool UseTiled(ClassicSettings target, bool? requested)
     {
         if (requested.HasValue) return requested.Value;
-        var u = UnitSize(target);
-        return target.Volume >= AutoThreshold && u.x * u.y * u.z < target.Volume;
+        return AutoTiled;
     }
 
     /// <summary>Default candidate unit sizes. 2 and 3 matter: short-period lattices are found instantly there and never on 6³+.</summary>

@@ -94,27 +94,17 @@ Measured on a 24³, no symmetry, breeder goal (Release, this machine): scalar ~3
 parallel children ~1 450, incremental ~150 000 in rollout; a training iteration costs ~0.5 ms
 and an inference ~2.4 µs. Always build Release — Debug is ~3.5× slower.
 
-**Tiled restarts** (classic; not in upstream): every rule is local, so for large grids a
-restart begins from a small unit design tiled across the grid (random phase shift, 2% noise)
-instead of from a random grid. Units are optimized **on a torus** (`ClassicSettings.Periodic`:
-neighbours and moderator rays wrap, there is no casing) — the neighbourhood a unit actually
-has once tiled — so casing-only coolers are invalid by their own rule and a narrow unit's
-cells see their own copies through the wrap; a test tiles each torus unit into an ordinary box
-and checks the interior agrees tile for tile. Unit fitness breaks ties towards cooling surplus
-(`SurplusTieBreak`, bounded below the value of one cell), because that surplus is what the
-big-box search later converts into extra cells; without it, units drift to air-filled variants
-of the same cell count. A pool of units of sizes 2–8 is built up front (~13 s, in parallel;
-2³/3³ matter because short-period lattices are found instantly there and not on 6³+). Restarts
-happen exactly where upstream restarts (first episode, failed inference, every episode with
-the net off) so long runs keep chaining and improving; each restart takes the best-scoring
-untried unit, then epsilon-greedy on the outcomes of the episodes it seeded.
-`--restart auto|random|tiled` / "Episode restarts" in the TUI; auto = tiled for grids of
-2 000+ tiles (no measurable difference at 10³).
-
-Measured on a 24³ without symmetry, 5 minutes, 8 seeds, vs upstream's random restarts:
-breeding 7 077 vs 5 421 cells (+30%, spread 7 030–7 116), power 1.568 M vs 1.460 M RF/t
-(+7.4%). For reference, an hours-long upstream run reached 7 155 cells. `--adopt on` feeds
-crops of converged designs back into the pool; it measured slightly worse, so it is off.
+**Tiled restarts** (classic; not in upstream; **opt-in**): a restart can begin from a small
+unit design tiled across the grid instead of from a random grid. Units are optimized on a
+torus (`ClassicSettings.Periodic`) with a bounded tie-break towards cooling surplus, and a
+pool of sizes 2–8 is built up front (~13 s). Measured on a 24³ breeding run this reaches
+~7 000 cells within seconds where upstream's random restarts take hours — but in hours-long
+runs it was observed to plateau around 7 000 while random restarts kept creeping past it
+(7 200). The likely mechanism is neutral drift of unneeded cryotheum into air under the
+`>=` acceptance rule, which removes the cooling surplus that later conversions need; that is
+not resolved, so the default ("Random (upstream)") is upstream behaviour and tiling is an
+explicit choice: `--restart tiled` / "Tiled unit design" in the TUI. Long-run users should
+keep the default.
 
 One consequence of the counter-based totals: the port's classic double totals can differ
 from the C++ in the last bit (summation order), so the classic oracle test compares those

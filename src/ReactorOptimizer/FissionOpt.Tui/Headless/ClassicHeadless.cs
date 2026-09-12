@@ -24,8 +24,8 @@ public static class ClassicHeadless
           --sym x,y,z | --sym none          mirror symmetries (default x,y,z)
           --no-net                disable the value network
           --simd-net on|off       Vector256 kernels in the value net (default on; off = original scalar loops)
-          --restart auto|random|tiled  restart episodes from a random grid (upstream) or from tiled unit designs
-                                  optimized first on small boxes (auto: tiled for grids of >= 2000 tiles)
+          --restart auto|random|tiled  restart episodes from a random grid (upstream; also what auto means) or from
+                                  tiled unit designs optimized first on small boxes (fast start; may plateau in long runs)
           --unit-sizes A,B,...    candidate unit sizes for --restart tiled (default 2,3,4,5,6,8)
           --unit-steps N          steps spent optimizing each unit design (default 1500000)
           --tile-noise F          fraction of tiles randomized on each tiled restart (default 0.02)
