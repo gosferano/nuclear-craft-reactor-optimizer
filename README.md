@@ -94,18 +94,6 @@ Measured on a 24³, no symmetry, breeder goal (Release, this machine): scalar ~3
 parallel children ~1 450, incremental ~150 000 in rollout; a training iteration costs ~0.5 ms
 and an inference ~2.4 µs. Always build Release — Debug is ~3.5× slower.
 
-**Tiled restarts** (classic; not in upstream; **opt-in**): a restart can begin from a small
-unit design tiled across the grid instead of from a random grid. Units are optimized on a
-torus (`ClassicSettings.Periodic`) with a bounded tie-break towards cooling surplus, and a
-pool of sizes 2–8 is built up front (~13 s). Measured on a 24³ breeding run this reaches
-~7 000 cells within seconds where upstream's random restarts take hours — but in hours-long
-runs it was observed to plateau around 7 000 while random restarts kept creeping past it
-(7 200). The likely mechanism is neutral drift of unneeded cryotheum into air under the
-`>=` acceptance rule, which removes the cooling surplus that later conversions need; that is
-not resolved, so the default ("Random (upstream)") is upstream behaviour and tiling is an
-explicit choice: `--restart tiled` / "Tiled unit design" in the TUI. Long-run users should
-keep the default.
-
 One consequence of the counter-based totals: the port's classic double totals can differ
 from the C++ in the last bit (summation order), so the classic oracle test compares those
 to 1e-9 relative and everything else exactly.

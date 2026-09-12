@@ -18,7 +18,6 @@ public sealed class IncrementalClassicEvaluator
 {
     private readonly ClassicSettings _settings;
     private readonly int _sizeX, _sizeY, _sizeZ, _n;
-    private readonly bool _periodic;
     private readonly int[] _s;        // state.Data
     public Grid3 State { get; }
 
@@ -78,7 +77,7 @@ public sealed class IncrementalClassicEvaluator
     /// <summary>True when the incremental evaluator gives the same answers as the scalar one for these settings.</summary>
     public static bool Supports(ClassicSettings settings)
     {
-        if (!settings.EnsureActiveCoolerAccessible || settings.Periodic) return true;
+        if (!settings.EnsureActiveCoolerAccessible) return true;
         for (int t = Active; t < Cell; ++t)
             if (settings.Limit[t] != 0)
                 return false;
@@ -93,7 +92,6 @@ public sealed class IncrementalClassicEvaluator
         State = state;
         _s = state.Data;
         _sizeX = settings.SizeX; _sizeY = settings.SizeY; _sizeZ = settings.SizeZ;
-        _periodic = settings.Periodic;
         _n = settings.Volume;
         _mult = new int[_n]; _modMult = new int[_n]; _rules = new int[_n];
         _isActive = new bool[_n]; _inLine = new int[_n]; _invalid = new bool[_n];
@@ -103,14 +101,8 @@ public sealed class IncrementalClassicEvaluator
 
     private int Index(int x, int y, int z) => (x * _sizeY + y) * _sizeZ + z;
     private bool InBounds(int x, int y, int z) => (uint)x < (uint)_sizeX && (uint)y < (uint)_sizeY && (uint)z < (uint)_sizeZ;
-    private static int Mod(int v, int n) { int m = v % n; return m < 0 ? m + n : m; }
-
-    /// <summary>Flat index of a possibly out-of-range position: −1 (casing) when out of bounds, or the wrapped index on a torus.</summary>
-    private int At(int x, int y, int z)
-    {
-        if (_periodic) return Index(Mod(x, _sizeX), Mod(y, _sizeY), Mod(z, _sizeZ));
-        return InBounds(x, y, z) ? Index(x, y, z) : -1;
-    }
+    /// <summary>Flat index of a possibly out-of-range position, or −1 when it is outside the grid (casing).</summary>
+    private int At(int x, int y, int z) => InBounds(x, y, z) ? Index(x, y, z) : -1;
     private (int x, int y, int z) Coords(int i) => (i / (_sizeY * _sizeZ), i / _sizeZ % _sizeY, i % _sizeZ);
 
     private static readonly (int dx, int dy, int dz)[] Dirs = { (-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1) };
@@ -291,7 +283,6 @@ public sealed class IncrementalClassicEvaluator
 
     private int CountCasing(int x, int y, int z)
     {
-        if (_periodic) return 0;
         int c = 0;
         foreach (var (dx, dy, dz) in Dirs)
             if (!InBounds(x + dx, y + dy, z + dz)) ++c;

@@ -33,16 +33,13 @@ public sealed class ClassicSession : ISession
     private readonly ClassicSample _shown;
     public bool HasDesign { get; private set; }
 
-    public ClassicSession(ClassicSettings settings, bool useNet, int seed, string fuelName, bool? incremental, bool simdNet, bool? tiledRestarts)
+    public ClassicSession(ClassicSettings settings, bool useNet, int seed, string fuelName, bool? incremental, bool simdNet)
     {
         _settings = settings;
         _fuelName = fuelName;
-        // The unit pool takes a couple of seconds to build; the runner constructs everything on its own thread.
+        // The runner constructs the optimizer on its own thread so the UI never blocks on setup.
         _runner = new OptimizerRunner<ClassicSample>(() =>
-        {
-            var pool = ClassicSeeding.PoolFor(settings, tiledRestarts, seed);
-            return new ClassicOpt(settings, useNet, seed, incrementalEvaluation: incremental, simdNet: simdNet, unitPool: pool);
-        }, seed);
+            new ClassicOpt(settings, useNet, seed, incrementalEvaluation: incremental, simdNet: simdNet), seed);
         _shown = new ClassicSample(settings.SizeX, settings.SizeY, settings.SizeZ);
     }
 
@@ -52,8 +49,7 @@ public sealed class ClassicSession : ISession
         {
             if (_runner.Optimizer is not ClassicOpt opt) return "";
             return (opt.IncrementalEvaluation ? " [incremental]" : opt.ParallelChildren ? " [4 threads]" : "")
-                + (opt.UsesNet ? opt.SimdNet ? " [simd net]" : " [scalar net]" : "")
-                + (opt.TiledRestarts ? $" [tiled restarts: {opt.UnitPool!.Units.Count} units]" : "");
+                + (opt.UsesNet ? opt.SimdNet ? " [simd net]" : " [scalar net]" : "");
         }
     }
 
@@ -68,7 +64,7 @@ public sealed class ClassicSession : ISession
     public RunnerProgress Progress => _runner.Progress;
     public bool TryTakeLossHistory(double[] dest) => _runner.TryTakeLossHistory(dest);
 
-    public string StageText(RunnerProgress p) => p.Preparing ? "Preparing (optimizing unit designs)…" : (p.Stage switch
+    public string StageText(RunnerProgress p) => p.Preparing ? "Preparing…" : (p.Stage switch
     {
         ClassicOpt.StageTrain => $"Episode {p.Episode}, training iteration {p.Iteration}",
         ClassicOpt.StageInfer => $"Episode {p.Episode}, inference iteration {p.Iteration}",

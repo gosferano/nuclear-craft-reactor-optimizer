@@ -24,17 +24,6 @@ public static class ClassicHeadless
           --sym x,y,z | --sym none          mirror symmetries (default x,y,z)
           --no-net                disable the value network
           --simd-net on|off       Vector256 kernels in the value net (default on; off = original scalar loops)
-          --restart auto|random|tiled  restart episodes from a random grid (upstream; also what auto means) or from
-                                  tiled unit designs optimized first on small boxes (fast start; may plateau in long runs)
-          --unit-sizes A,B,...    candidate unit sizes for --restart tiled (default 2,3,4,5,6,8)
-          --unit-steps N          steps spent optimizing each unit design (default 1500000)
-          --tile-noise F          fraction of tiles randomized on each tiled restart (default 0.02)
-          --adopt on|off          also add crops of converged designs to the unit pool (default off; measured slightly worse)
-          --incremental auto|on|off  evaluate mutations incrementally (auto: on unless active coolers + accessibility)
-          --parallel auto|on|off  evaluate the 4 children of each step on separate threads (auto: on for >= 300 tiles;
-                                  only used when incremental evaluation is off)
-          --no-heat-neutral       allow heat-positive designs
-          --no-accessible         don't require active coolers to be reachable from the casing
           --seed N                RNG seed (default 0)
           --seconds S             time budget (default 30)
           --steps N               step budget instead of a time budget
@@ -50,9 +39,7 @@ public static class ClassicHeadless
         string goal = "power", sym = "x,y,z";
         bool useNet = true, heatNeutral = true, accessible = true, quiet = false;
         bool? parallel = null, incremental = null;
-        bool simdNet = true; bool? tiled = null;
-        int unitSteps = ClassicSeeding.DefaultUnitSteps; double tileNoise = 0.02; bool adopt = false;
-        IEnumerable<int>? unitSizes = null;
+        bool simdNet = true;
         int seed = 0; double seconds = 30; long? steps = null; string? outFile = null;
 
         for (int i = 0; i < args.Length; ++i)
@@ -79,13 +66,6 @@ public static class ClassicHeadless
                 case "--goal": goal = Next(); break;
                 case "--sym": sym = Next(); break;
                 case "--no-net": useNet = false; break;
-                case "--restart":
-                    tiled = Next().ToLowerInvariant() switch { "auto" => null, "random" => false, "tiled" => true, var v => throw new ArgumentException("--restart expects auto|random|tiled, got " + v) };
-                    break;
-                case "--unit-steps": unitSteps = int.Parse(Next(), CultureInfo.InvariantCulture); break;
-                case "--unit-sizes": unitSizes = Next().Split(',').Select(v => int.Parse(v.Trim(), CultureInfo.InvariantCulture)).ToList(); break;
-                case "--adopt": adopt = Next().ToLowerInvariant() switch { "on" => true, "off" => false, var v => throw new ArgumentException("--adopt expects on|off, got " + v) }; break;
-                case "--tile-noise": tileNoise = ParseDouble(Next()); break;
                 case "--simd-net":
                     simdNet = Next().ToLowerInvariant() switch { "on" => true, "off" => false, var v => throw new ArgumentException("--simd-net expects on|off, got " + v) };
                     break;
@@ -162,13 +142,9 @@ public static class ClassicHeadless
 
         Console.WriteLine($"seed={seed} size={settings.SizeX}x{settings.SizeY}x{settings.SizeZ} fuel={fuelName} power={settings.FuelBasePower} heat={settings.FuelBaseHeat} rates={ratePreset.Config} goal={settings.Goal} sym={sym} net={useNet} heatNeutral={heatNeutral} accessible={accessible}");
 
+        using var opt = new ClassicOpt(settings, useNet, seed, parallel, incremental, simdNet);
+        Console.WriteLine($"incremental evaluation: {opt.IncrementalEvaluation}, parallel children: {opt.ParallelChildren}, simd net: {opt.SimdNet}");
         var sw = Stopwatch.StartNew();
-        var pool = ClassicSeeding.PoolFor(settings, tiled, seed, unitSizes, unitSteps);
-        if (pool != null)
-            Console.WriteLine($"unit pool optimized in {sw.Elapsed.TotalSeconds:F1}s ({unitSteps} steps each): " +
-                string.Join(", ", pool.Units.Select(u => $"{u.Size.x}x{u.Size.y}x{u.Size.z} score {u.Score:0.####}")));
-        using var opt = new ClassicOpt(settings, useNet, seed, parallel, incremental, simdNet, pool, tileNoise, adopt);
-        Console.WriteLine($"incremental evaluation: {opt.IncrementalEvaluation}, parallel children: {opt.ParallelChildren}, simd net: {opt.SimdNet}, restarts: {(opt.TiledRestarts ? "tiled" : "random")}");
         long n = 0;
         while (steps.HasValue ? n < steps.Value : sw.Elapsed.TotalSeconds < seconds)
         {
@@ -182,9 +158,6 @@ public static class ClassicHeadless
         }
         sw.Stop();
         Console.WriteLine($"ran {n} steps in {sw.Elapsed.TotalSeconds:F1}s ({n / sw.Elapsed.TotalSeconds:F0} steps/s); final {StageText(opt)}");
-        if (opt.UnitPool != null)
-            foreach (var u in opt.UnitPool.Units.OrderBy(u => u.Size.x))
-                Console.WriteLine($"unit {u.Size.x}x{u.Size.y}x{u.Size.z}: score {u.Score:0.####} uses {u.Uses} meanOutcome {u.MeanOutcome:0.##} best {u.BestOutcome:0.##} adopted {u.Adopted}");
         Console.WriteLine();
         Console.Write(ClassicExport.RenderMetrics(opt.Best.Value));
         Console.WriteLine();
