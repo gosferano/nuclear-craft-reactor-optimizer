@@ -11,8 +11,8 @@ public static class ClassicSeeding
 {
     /// <summary>Grids at least this large default to tiled restarts; below it random restarts explore better (measured: no gain at 10³, +2–3% at 24³).</summary>
     public const int AutoThreshold = 2000;
-    /// <summary>Default number of steps spent optimizing each unit design (about a second each; units run in parallel).</summary>
-    public const int DefaultUnitSteps = 200_000;
+    /// <summary>Default number of steps spent optimizing each unit design (units run in parallel; 4³ needs ~2M to reach the checkerboard density).</summary>
+    public const int DefaultUnitSteps = 1_500_000;
 
     /// <summary>Resolves the restart mode: null = automatic by grid volume.</summary>
     public static bool UseTiled(ClassicSettings target, bool? requested)
@@ -22,8 +22,10 @@ public static class ClassicSeeding
         return target.Volume >= AutoThreshold && u.x * u.y * u.z < target.Volume;
     }
 
-    /// <summary>Default candidate unit sizes.</summary>
-    public static readonly int[] DefaultUnitSizes = { 4, 5, 6, 7, 8 };
+    /// <summary>Default candidate unit sizes. 2 and 3 matter: short-period lattices are found instantly there and never on 6³+.</summary>
+    public static readonly int[] DefaultUnitSizes = { 2, 3, 4, 5, 6, 8 };
+    /// <summary>Unit fitness tie-break towards cooling surplus (bounded by this value; a cell is worth 1).</summary>
+    public const double UnitSurplusTieBreak = 0.05;
 
     /// <summary>Builds the unit pool for <paramref name="target"/>, or returns null when tiled restarts are not wanted.</summary>
     public static ClassicUnitPool? PoolFor(ClassicSettings target, bool? requested, int seed, IEnumerable<int>? unitSizes = null, int unitSteps = DefaultUnitSteps)
@@ -57,6 +59,7 @@ public static class ClassicSeeding
         s.SizeX = unit.x; s.SizeY = unit.y; s.SizeZ = unit.z;
         s.SymX = s.SymY = s.SymZ = false;
         s.Periodic = true;
+        s.SurplusTieBreak = UnitSurplusTieBreak;
         double scale = (double)s.Volume / target.Volume;
         for (int t = 0; t < s.Limit.Length; ++t)
             if (target.Limit[t] >= 0)

@@ -112,7 +112,8 @@ public sealed class ClassicUnitPoolTests
         Assert.All(pool.Units, u => Assert.True(u.Score > 0, "units must be feasible and non-empty"));
         var rng = new Rng(1);
         var first = new[] { pool.Pick(rng), pool.Pick(rng), pool.Pick(rng) };
-        Assert.Equal(new[] { 0, 1, 2 }, first);
+        Assert.Equal(new[] { 0, 1, 2 }, first.OrderBy(i => i).ToArray()); // each once...
+        Assert.Equal(first, first.OrderByDescending(i => pool.Units[i].Score).ToArray()); // ...best-scoring first
         pool.Report(0, 10); pool.Report(1, 30); pool.Report(2, 20);
         int picks1 = 0;
         for (int i = 0; i < 400; ++i) if (pool.Pick(rng) == 1) ++picks1;

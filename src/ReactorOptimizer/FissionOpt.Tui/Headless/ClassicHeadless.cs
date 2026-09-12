@@ -26,8 +26,8 @@ public static class ClassicHeadless
           --simd-net on|off       Vector256 kernels in the value net (default on; off = original scalar loops)
           --restart auto|random|tiled  restart episodes from a random grid (upstream) or from tiled unit designs
                                   optimized first on small boxes (auto: tiled for grids of >= 2000 tiles)
-          --unit-sizes A,B,...    candidate unit sizes for --restart tiled (default 4,5,6,7,8)
-          --unit-steps N          steps spent optimizing each unit design (default 200000)
+          --unit-sizes A,B,...    candidate unit sizes for --restart tiled (default 2,3,4,5,6,8)
+          --unit-steps N          steps spent optimizing each unit design (default 1500000)
           --tile-noise F          fraction of tiles randomized on each tiled restart (default 0.02)
           --adopt on|off          also add crops of converged designs to the unit pool (default off; measured slightly worse)
           --incremental auto|on|off  evaluate mutations incrementally (auto: on unless active coolers + accessibility)

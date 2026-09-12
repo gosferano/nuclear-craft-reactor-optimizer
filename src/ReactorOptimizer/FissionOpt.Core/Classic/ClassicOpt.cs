@@ -242,17 +242,25 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
 
     public bool Feasible(ClassicEvaluation x) => !_settings.EnsureHeatNeutral || x.NetHeat <= 0.0;
 
-    public double RawFitness(ClassicEvaluation x)
+    public double RawFitness(ClassicEvaluation x) => GoalFitness(_settings, x);
+
+    /// <summary>Upstream's rawFitness, plus the optional cooling-surplus tie-break (see <see cref="ClassicSettings.SurplusTieBreak"/>).</summary>
+    public static double GoalFitness(ClassicSettings s, ClassicEvaluation x)
     {
-        switch (_settings.Goal)
+        double f = s.Goal switch
         {
-            default:
-                return x.AvgMult;
-            case ClassicGoal.Breeder:
-                return x.AvgBreed;
-            case ClassicGoal.Efficiency:
-                return _settings.EnsureHeatNeutral ? (x.Efficiency - 1) * x.DutyCycle : x.Efficiency - 1;
+            ClassicGoal.Breeder => x.AvgBreed,
+            ClassicGoal.Efficiency => s.EnsureHeatNeutral ? (x.Efficiency - 1) * x.DutyCycle : x.Efficiency - 1,
+            _ => x.AvgMult,
+        };
+        if (s.SurplusTieBreak > 0)
+        {
+            double maxRate = 0;
+            foreach (var r in s.CoolingRates) if (r > maxRate) maxRate = r;
+            if (maxRate > 0)
+                f += s.SurplusTieBreak * (x.Cooling - x.Heat) / (maxRate * s.Volume);
         }
+        return f;
     }
 
     /// <summary>Fitness of the incremental evaluator's current (parent + mutation) state.</summary>
@@ -512,11 +520,11 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
             if (_nIteration == 0)
             {
                 _nStage = StageInfer;
-                // Upstream classic lets the net-guided climb start from the converged design (a restart only
-                // follows if that climb fails). In tiled mode every episode instead starts from a fresh unit
-                // tiling, as the overhaul optimizer does, so the pool is exercised and outcomes are comparable.
-                if (_unitPool != null)
-                    Restart();
+                // As upstream: the net-guided climb starts from the converged design, and a restart follows
+                // only if that climb finds nothing. Episodes therefore chain, which is what lets long runs
+                // keep improving; tiled restarts apply wherever a restart happens (first episode, failed
+                // inference, or every episode when the net is off). Restarting every episode from a fresh
+                // tiling was measured to win the first minutes and then plateau, so it is not done.
                 _parentFitness = _net!.Infer(_parent);
                 _inferenceFailed = true;
             }

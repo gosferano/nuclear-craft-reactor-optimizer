@@ -30,6 +30,14 @@ public sealed class ClassicSettings
     /// </summary>
     public bool Periodic { get; set; }
 
+    /// <summary>
+    /// Tie-break weight for cooling surplus in the fitness: adds <c>weight × (cooling − heat) / (maxRate × volume)</c>,
+    /// a term bounded by ±weight, so it never outranks a real change in the goal metric but decides between
+    /// otherwise-equal designs. Used for unit designs, whose surplus is what the big-box search later spends;
+    /// 0 (default) is upstream's fitness exactly.
+    /// </summary>
+    public double SurplusTieBreak { get; set; }
+
     public int Volume => SizeX * SizeY * SizeZ;
 
     public ClassicSettings Clone()
@@ -40,7 +48,7 @@ public sealed class ClassicSettings
             FuelBasePower = FuelBasePower, FuelBaseHeat = FuelBaseHeat,
             EnsureActiveCoolerAccessible = EnsureActiveCoolerAccessible,
             EnsureHeatNeutral = EnsureHeatNeutral,
-            Goal = Goal, SymX = SymX, SymY = SymY, SymZ = SymZ, Periodic = Periodic,
+            Goal = Goal, SymX = SymX, SymY = SymY, SymZ = SymZ, Periodic = Periodic, SurplusTieBreak = SurplusTieBreak,
         };
         Array.Copy(Limit, s.Limit, Limit.Length);
         Array.Copy(CoolingRates, s.CoolingRates, CoolingRates.Length);

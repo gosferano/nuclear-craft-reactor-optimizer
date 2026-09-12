@@ -66,12 +66,7 @@ public sealed class ClassicUnitPool
         var e = new ClassicEvaluation();
         new ClassicEvaluator(s).Run(unit, e);
         if (s.EnsureHeatNeutral && e.NetHeat > 0.0) return double.NegativeInfinity;
-        double raw = s.Goal switch
-        {
-            ClassicGoal.Breeder => e.AvgBreed,
-            ClassicGoal.Efficiency => s.EnsureHeatNeutral ? (e.Efficiency - 1) * e.DutyCycle : e.Efficiency - 1,
-            _ => e.AvgMult,
-        };
+        double raw = ClassicOpt.GoalFitness(s, e);
         // Power and breeding are extensive (scale with volume); efficiency is already per cell.
         return s.Goal == ClassicGoal.Efficiency ? raw : raw / unit.Length;
     }
@@ -122,12 +117,18 @@ public sealed class ClassicUnitPool
         return true;
     }
 
-    /// <summary>Picks the unit for the next episode: untried units first, then epsilon-greedy on mean episode outcome.</summary>
+    /// <summary>
+    /// Picks the unit for the next episode: untried units first in descending torus score (with the net on,
+    /// episodes chain and the first pick may be the only one ever used), then epsilon-greedy on mean episode outcome.
+    /// </summary>
     public int Pick(Rng rng)
     {
         if (_units.Count == 1) return 0;
+        int untried = -1;
         for (int i = 0; i < _units.Count; ++i)
-            if (_units[i].Uses == 0 && !_pending.Contains(i)) { _pending.Add(i); return i; }
+            if (_units[i].Uses == 0 && !_pending.Contains(i) && (untried < 0 || _units[i].Score > _units[untried].Score))
+                untried = i;
+        if (untried >= 0) { _pending.Add(untried); return untried; }
         if (rng.NextDouble() < Epsilon) return rng.NextInt(_units.Count - 1);
         int best = 0;
         for (int i = 1; i < _units.Count; ++i)
