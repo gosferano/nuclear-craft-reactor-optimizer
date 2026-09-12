@@ -39,9 +39,11 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
     private readonly int[][] _childLimit = Array.Empty<int[]>();
     private readonly ClassicEvaluation[] _childValue = Array.Empty<ClassicEvaluation>();
     private readonly (int x, int y, int z, int tile)[] _childMutation = Array.Empty<(int, int, int, int)>();
-    // Tiling-seeded restarts (see ClassicSeeding): null = upstream's random restarts.
-    private readonly Grid3? _tilePattern;
+    // Tiling-seeded restarts (see ClassicSeeding / ClassicUnitPool): null = upstream's random restarts.
+    private readonly ClassicUnitPool? _unitPool;
     private readonly double _tileNoise;
+    private readonly bool _adoptUnits;
+    private int _currentUnit = -1;
     private readonly List<Coord> _allowedCoords = new();
     private readonly List<int> _allowedTiles = new();
     private int _nEpisode, _nStage, _nIteration;
@@ -85,14 +87,17 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
     /// reproduce a run made with the same setting.</param>
     /// <param name="simdNet">Use the Vector256 kernels in the value net (faster; results reproducible on every CPU but
     /// differ in the last bits from the scalar loops, so a seed reproduces a run only with the same setting).</param>
-    /// <param name="tilePattern">If set, every episode restarts from this design tiled over the grid (random phase
-    /// shift, <paramref name="tileNoise"/> fraction of tiles randomized) instead of a random grid. Not upstream behaviour.</param>
+    /// <param name="unitPool">If set, every episode restarts from a unit design from this pool tiled over the grid
+    /// (random phase shift, <paramref name="tileNoise"/> fraction of tiles randomized) instead of a random grid;
+    /// units are chosen by episode outcome. <paramref name="adoptUnits"/> additionally adds crops of converged designs
+    /// to the pool; measured slightly negative at 5-minute budgets, so off by default. Not upstream behaviour.</param>
     public ClassicOpt(ClassicSettings settings, bool useNet, int seed, bool? parallelChildren = null, bool? incrementalEvaluation = null, bool simdNet = true,
-        Grid3? tilePattern = null, double tileNoise = 0.02)
+        ClassicUnitPool? unitPool = null, double tileNoise = 0.02, bool adoptUnits = false)
     {
         _settings = settings;
-        _tilePattern = tilePattern;
+        _unitPool = unitPool;
         _tileNoise = tileNoise;
+        _adoptUnits = adoptUnits;
         _evaluator = new ClassicEvaluator(settings);
         _rng = new Rng(seed);
         _incremental = incrementalEvaluation ?? IncrementalClassicEvaluator.Supports(settings);
@@ -162,14 +167,17 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
     }
 
     /// <summary>True when episodes restart from a tiled seed design rather than a random grid.</summary>
-    public bool TiledRestarts => _tilePattern != null;
+    public bool TiledRestarts => _unitPool != null;
+    public ClassicUnitPool? UnitPool => _unitPool;
 
     /// <summary>Mirrors <c>Opt::restart</c>: fills the parent with random tiles, respecting budgets and symmetry.</summary>
-    private void Restart()
+    private void Restart(bool keepUnit = false)
     {
-        if (_tilePattern != null)
+        if (_unitPool != null)
         {
-            TiledRestart();
+            if (!keepUnit || _currentUnit < 0)
+                _currentUnit = _unitPool.Pick(_rng);
+            TiledRestart(_unitPool.Units[_currentUnit].Grid);
             return;
         }
         _rng.Shuffle(_allowedCoords);
@@ -191,10 +199,9 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
         EvaluateParent();
     }
 
-    /// <summary>Restart from the tile pattern: random phase shift, a little noise, budgets and symmetry respected.</summary>
-    private void TiledRestart()
+    /// <summary>Restart from a unit design: random phase shift, a little noise, budgets and symmetry respected.</summary>
+    private void TiledRestart(Grid3 unit)
     {
-        var unit = _tilePattern!;
         _rng.Shuffle(_allowedCoords);
         Array.Copy(_settings.Limit, _parent.Limit, NumPlaceable);
         _parent.State.Fill(Air);
@@ -505,6 +512,11 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
             if (_nIteration == 0)
             {
                 _nStage = StageInfer;
+                // Upstream classic lets the net-guided climb start from the converged design (a restart only
+                // follows if that climb fails). In tiled mode every episode instead starts from a fresh unit
+                // tiling, as the overhaul optimizer does, so the pool is exercised and outcomes are comparable.
+                if (_unitPool != null)
+                    Restart();
                 _parentFitness = _net!.Infer(_parent);
                 _inferenceFailed = true;
             }
@@ -527,12 +539,22 @@ public sealed class ClassicOpt : IOptimizer<ClassicSample>, IDisposable
                 _nStage = 0;
                 ++_nEpisode;
                 if (_inferenceFailed)
-                    Restart();
+                    Restart(keepUnit: true); // the net found nothing from this tiling; try the same unit with a new shift
                 _net!.NewTrajectory();
                 AppendParentTrajectory();
             }
             else if (Feasible(_parent.Value) || _infeasibilityPenalty > 1e8)
             {
+                // A rollout has converged. With the net on, the next episode usually continues from this
+                // design (a restart happens only if inference fails), so this is where the unit that
+                // seeded the lineage gets its outcome, and where a refined crop can flow back into the pool.
+                if (_unitPool != null && _currentUnit >= 0)
+                {
+                    bool feasible = Feasible(_parent.Value);
+                    _unitPool.Report(_currentUnit, feasible ? RawFitness(_parent.Value) : 0.0);
+                    if (_adoptUnits && feasible)
+                        _unitPool.TryAdopt(_currentUnit, _parent.State, _rng);
+                }
                 _infeasibilityPenalty = 0.0;
                 if (_net != null)
                 {

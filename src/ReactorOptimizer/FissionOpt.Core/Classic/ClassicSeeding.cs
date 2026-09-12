@@ -11,8 +11,8 @@ public static class ClassicSeeding
 {
     /// <summary>Grids at least this large default to tiled restarts; below it random restarts explore better (measured: no gain at 10³, +2–3% at 24³).</summary>
     public const int AutoThreshold = 2000;
-    /// <summary>Default number of steps spent optimizing the unit design (a couple of seconds).</summary>
-    public const int DefaultUnitSteps = 300_000;
+    /// <summary>Default number of steps spent optimizing each unit design (about a second each; units run in parallel).</summary>
+    public const int DefaultUnitSteps = 200_000;
 
     /// <summary>Resolves the restart mode: null = automatic by grid volume.</summary>
     public static bool UseTiled(ClassicSettings target, bool? requested)
@@ -22,11 +22,16 @@ public static class ClassicSeeding
         return target.Volume >= AutoThreshold && u.x * u.y * u.z < target.Volume;
     }
 
-    /// <summary>Convenience: optimizes the unit for <paramref name="target"/> with the default budget, or returns null when tiled restarts are not wanted.</summary>
-    public static Grid3? PatternFor(ClassicSettings target, bool? requested, int seed, int unitSteps = DefaultUnitSteps)
+    /// <summary>Default candidate unit sizes.</summary>
+    public static readonly int[] DefaultUnitSizes = { 4, 5, 6, 7, 8 };
+
+    /// <summary>Builds the unit pool for <paramref name="target"/>, or returns null when tiled restarts are not wanted.</summary>
+    public static ClassicUnitPool? PoolFor(ClassicSettings target, bool? requested, int seed, IEnumerable<int>? unitSizes = null, int unitSteps = DefaultUnitSteps)
     {
         if (!UseTiled(target, requested)) return null;
-        return OptimizeUnit(target, UnitSize(target), unitSteps, seed);
+        var sizes = ClassicUnitPool.CandidateSizes(target, unitSizes ?? DefaultUnitSizes).ToList();
+        if (sizes.Count == 0) return null;
+        return ClassicUnitPool.Build(target, sizes, unitSteps, seed);
     }
 
     /// <summary>Unit box for a target: per axis, the largest divisor in 4..8, else min(size, 6).</summary>

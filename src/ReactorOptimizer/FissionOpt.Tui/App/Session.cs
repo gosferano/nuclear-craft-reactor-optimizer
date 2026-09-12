@@ -40,11 +40,11 @@ public sealed class ClassicSession : ISession
         _settings = settings;
         _fuelName = fuelName;
         // The unit optimization takes a couple of seconds; it runs here, before the window shows "Starting".
-        var pattern = ClassicSeeding.PatternFor(settings, tiledRestarts, seed);
-        var opt = new ClassicOpt(settings, useNet, seed, incrementalEvaluation: incremental, simdNet: simdNet, tilePattern: pattern);
+        var pool = ClassicSeeding.PoolFor(settings, tiledRestarts, seed);
+        var opt = new ClassicOpt(settings, useNet, seed, incrementalEvaluation: incremental, simdNet: simdNet, unitPool: pool);
         _modeText = (opt.IncrementalEvaluation ? " [incremental]" : opt.ParallelChildren ? " [4 threads]" : "")
             + (opt.UsesNet ? opt.SimdNet ? " [simd net]" : " [scalar net]" : "")
-            + (opt.TiledRestarts ? " [tiled restarts]" : "");
+            + (opt.TiledRestarts ? $" [tiled restarts: {opt.UnitPool!.Units.Count} units]" : "");
         _runner = new OptimizerRunner<ClassicSample>(opt);
         _shown = new ClassicSample(settings.SizeX, settings.SizeY, settings.SizeZ);
     }
