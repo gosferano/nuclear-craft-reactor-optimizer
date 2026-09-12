@@ -64,12 +64,18 @@ public sealed class MainWindow : Window
         Add(modeLabel, _mode, _tabs, bar);
 
         _mode.ValueChanged += (_, _) => ApplyMode();
+        // The tab header strip is drawn as part of the Tabs border; partial redraws triggered by the
+        // poll timer can leave it showing the previous tab's connectors, so repaint it on every change.
+        _tabs.ValueChanged += (_, _) => _tabs.SetNeedsDraw();
         _app.Mouse.MouseEvent += OnAppMouseEvent;
+        if (Environment.GetEnvironmentVariable("FISSIONOPT_MOUSE_LOG") is { Length: > 0 } logPath)
+            _mouseLog = new StreamWriter(logPath, append: true) { AutoFlush = true };
         ApplyMode();
         UpdateControls();
     }
 
     private bool _buttonHeld;
+    private StreamWriter? _mouseLog;
 
     /// <summary>
     /// Guards against a stale mouse grab. Buttons, radio items and similar views grab the mouse on
@@ -80,6 +86,7 @@ public sealed class MainWindow : Window
     /// </summary>
     private void OnAppMouseEvent(object? sender, Mouse e)
     {
+        _mouseLog?.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {e.Flags} at {e.ScreenPosition} -> {e.View?.GetType().Name ?? "(none)"} grabbed={_app.Mouse.IsGrabbed()} held={_buttonHeld}");
         const MouseFlags pressed = MouseFlags.LeftButtonPressed | MouseFlags.RightButtonPressed | MouseFlags.MiddleButtonPressed | MouseFlags.Button4Pressed;
         const MouseFlags released = MouseFlags.LeftButtonReleased | MouseFlags.RightButtonReleased | MouseFlags.MiddleButtonReleased | MouseFlags.Button4Released;
         bool isMotion = (e.Flags & MouseFlags.PositionReport) != 0;
@@ -181,6 +188,7 @@ public sealed class MainWindow : Window
 #endif
         _run.ShowProgress($"{_session.StageText(p)}  —  {state}  (seed {_session.Seed}, {p.Steps:N0} steps)");
         if (p.Finished || hadDesign != _session.HasDesign) UpdateControls();
+        _tabs.SetNeedsDraw();
         return true;
     }
 
@@ -235,6 +243,7 @@ public sealed class MainWindow : Window
         if (disposing)
         {
             _app.Mouse.MouseEvent -= OnAppMouseEvent;
+            _mouseLog?.Dispose();
             if (_timer != null) _app.RemoveTimeout(_timer);
             DisposeSession();
         }
