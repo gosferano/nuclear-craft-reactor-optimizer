@@ -47,13 +47,16 @@ public static class ClassicSeeding
 
     /// <summary>
     /// Settings for the unit optimization: same fuel, rates, goal and constraints; no symmetry;
-    /// per-block budgets scaled down in proportion to the volume.
+    /// per-block budgets scaled down in proportion to the volume; and <b>periodic</b>, so the unit is
+    /// optimized in the neighbourhood it will actually have — surrounded by copies of itself. Casing-only
+    /// coolers are then invalid by their own rule, and a cell may see its own copy through the wrap.
     /// </summary>
     public static ClassicSettings UnitSettings(ClassicSettings target, (int x, int y, int z) unit)
     {
         var s = target.Clone();
         s.SizeX = unit.x; s.SizeY = unit.y; s.SizeZ = unit.z;
         s.SymX = s.SymY = s.SymZ = false;
+        s.Periodic = true;
         double scale = (double)s.Volume / target.Volume;
         for (int t = 0; t < s.Limit.Length; ++t)
             if (target.Limit[t] >= 0)

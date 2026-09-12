@@ -19,6 +19,7 @@ public sealed class ClassicEvaluator
 {
     private readonly ClassicSettings _settings;
     private readonly int _sizeX, _sizeY, _sizeZ;
+    private readonly bool _periodic;
     private readonly int[] _mults;
     private readonly int[] _rules;
     private readonly bool[] _isActive;
@@ -35,6 +36,7 @@ public sealed class ClassicEvaluator
         _sizeX = settings.SizeX;
         _sizeY = settings.SizeY;
         _sizeZ = settings.SizeZ;
+        _periodic = settings.Periodic;
         int n = settings.Volume;
         _mults = new int[n];
         _rules = new int[n];
@@ -49,9 +51,18 @@ public sealed class ClassicEvaluator
     private bool InBounds(int x, int y, int z) =>
         (uint)x < (uint)_sizeX && (uint)y < (uint)_sizeY && (uint)z < (uint)_sizeZ;
 
-    private int GetTileSafe(int x, int y, int z) => InBounds(x, y, z) ? _s[Index(x, y, z)] : -1;
+    private static int Mod(int v, int n) { int m = v % n; return m < 0 ? m + n : m; }
 
-    private int GetMultSafe(int x, int y, int z) => InBounds(x, y, z) ? _mults[Index(x, y, z)] : 0;
+    /// <summary>Flat index of a possibly out-of-range position: −1 (casing) when out of bounds, or the wrapped index on a torus.</summary>
+    private int At(int x, int y, int z)
+    {
+        if (_periodic) return Index(Mod(x, _sizeX), Mod(y, _sizeY), Mod(z, _sizeZ));
+        return InBounds(x, y, z) ? Index(x, y, z) : -1;
+    }
+
+    private int GetTileSafe(int x, int y, int z) { int i = At(x, y, z); return i < 0 ? -1 : _s[i]; }
+
+    private int GetMultSafe(int x, int y, int z) { int i = At(x, y, z); return i < 0 ? 0 : _mults[i]; }
 
     /// <summary>Walks from a cell along one axis; true if another cell is within reach through moderators only.</summary>
     private bool CountMult(int x, int y, int z, int dx, int dy, int dz)
@@ -65,7 +76,7 @@ public sealed class ClassicEvaluator
                 for (int i = 0; i < n; ++i)
                 {
                     x -= dx; y -= dy; z -= dz;
-                    _isModeratorInLine[Index(x, y, z)] = true;
+                    _isModeratorInLine[At(x, y, z)] = true;
                 }
                 return true;
             }
@@ -95,9 +106,8 @@ public sealed class ClassicEvaluator
     /// </summary>
     private bool IsActiveSafe(int tile, int x, int y, int z)
     {
-        if (!InBounds(x, y, z)) return false;
-        int i = Index(x, y, z);
-        return _s[i] == tile && _isActive[i];
+        int i = At(x, y, z);
+        return i >= 0 && _s[i] == tile && _isActive[i];
     }
 
     private int CountActiveNeighbors(int tile, int x, int y, int z)
@@ -110,8 +120,11 @@ public sealed class ClassicEvaluator
             + (IsActiveSafe(tile, x, y, z + 1) ? 1 : 0);
     }
 
-    private bool IsTileSafe(int tile, int x, int y, int z) =>
-        InBounds(x, y, z) && _s[Index(x, y, z)] == tile;
+    private bool IsTileSafe(int tile, int x, int y, int z)
+    {
+        int i = At(x, y, z);
+        return i >= 0 && _s[i] == tile;
+    }
 
     private int CountNeighbors(int tile, int x, int y, int z)
     {
@@ -125,6 +138,7 @@ public sealed class ClassicEvaluator
 
     private int CountCasingNeighbors(int x, int y, int z)
     {
+        if (_periodic) return 0;
         return (InBounds(x - 1, y, z) ? 0 : 1)
             + (InBounds(x + 1, y, z) ? 0 : 1)
             + (InBounds(x, y - 1, z) ? 0 : 1)
@@ -222,7 +236,7 @@ public sealed class ClassicEvaluator
                 }
                 else if (tile < Cell)
                 {
-                    if (settings.EnsureActiveCoolerAccessible && !CheckAccessibility(tile, x, y, z))
+                    if (settings.EnsureActiveCoolerAccessible && !_periodic && !CheckAccessibility(tile, x, y, z))
                         _rules[i] = -1;
                     else
                         _rules[i] = tile - Active;

@@ -17,6 +17,7 @@ public sealed class IncrementalEvaluatorTests
             SizeX = rng.Next(1, maxDim + 1), SizeY = rng.Next(1, maxDim + 1), SizeZ = rng.Next(1, maxDim + 1),
             FuelBasePower = 120, FuelBaseHeat = rng.Next(5) == 0 ? 0 : 50,
             EnsureActiveCoolerAccessible = rng.Next(2) == 0,
+            Periodic = rng.Next(3) == 0,
         };
         Array.Fill(s.Limit, -1);
         if (s.EnsureActiveCoolerAccessible)

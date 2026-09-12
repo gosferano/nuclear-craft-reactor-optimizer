@@ -96,15 +96,21 @@ and an inference ~2.4 µs. Always build Release — Debug is ~3.5× slower.
 
 **Tiled restarts** (classic; not in upstream): every rule is local, so for large grids each
 episode restarts from a small unit design tiled across the grid (random phase shift, 2% noise)
-instead of from a random grid. A pool of units of sizes 4–8 is optimized up front (~2 s, in
-parallel); each episode picks one — every unit once, then epsilon-greedy on how episodes seeded
-from it ended — and in this mode the value net's guided climb starts from the fresh tiling
-rather than from the previous design. `--restart auto|random|tiled` / "Episode restarts" in
-the TUI; auto = tiled for grids of 2 000+ tiles (no measurable difference at 10³). Measured on a
-24³ without symmetry, 5 minutes, 8 seeds: breeding 5 838 vs 5 421 cells (+7.7%, best seed
-6 638), power 1.487 M vs 1.460 M RF/t (+1.9%), and the pool is at 10 s where random restarts are
-at 5 minutes. `--adopt on` additionally feeds crops of converged designs back into the pool;
-it measured slightly worse (crops cost an episode each to evaluate), so it is off by default.
+instead of from a random grid. Units are optimized **on a torus** (`ClassicSettings.Periodic`:
+neighbours and moderator rays wrap, there is no casing) — i.e. in the neighbourhood a unit
+actually has once tiled, surrounded by copies of itself. Casing-only coolers are then invalid
+by their own rule and a narrow unit's cells see their own copies through the wrap; a test tiles
+each torus unit into an ordinary box and checks the interior agrees tile for tile. A pool of
+units of sizes 4–8 is built up front (~2 s, in parallel); each episode picks one — every unit
+once, then epsilon-greedy on how episodes seeded from it ended — and the value net's guided
+climb starts from the fresh tiling. `--restart auto|random|tiled` / "Episode restarts" in the
+TUI; auto = tiled for grids of 2 000+ tiles (no measurable difference at 10³).
+
+Measured on a 24³ without symmetry, 5 minutes, 8 seeds, vs upstream's random restarts:
+breeding 6 546 vs 5 421 cells (+21%; the worst torus seed beats the best random seed), power
+1.524 M vs 1.460 M RF/t (+4.4%). Units optimized in walled boxes instead of on a torus gave
+5 838 / 1.487 M. `--adopt on` feeds crops of converged designs back into the pool; it measured
+slightly worse, so it is off by default.
 
 One consequence of the counter-based totals: the port's classic double totals can differ
 from the C++ in the last bit (summation order), so the classic oracle test compares those
